@@ -17,6 +17,7 @@
       <textarea
         id="query"
         rows="3"
+        maxlength="2000"
         placeholder="Например: взыскание задолженности по аренде нежилого помещения арбитраж"
       ></textarea>
       <label class="label scope-label" for="scope">Область</label>
@@ -24,6 +25,16 @@
         <option value="practice">Судебная практика</option>
         <option value="all">Всё по запросу</option>
       </select>
+      <div class="field-row">
+        <label class="compact-field" for="maxItems">
+          <span>Лимит документов</span>
+          <input id="maxItems" type="number" min="1" max="200" value="50" />
+        </label>
+        <label class="check-field" for="rememberQuery">
+          <input id="rememberQuery" type="checkbox" />
+          <span>Запоминать запрос</span>
+        </label>
+      </div>
       <div class="search-actions">
         <button id="btnFind" class="btn primary" type="button">Найти</button>
         <button id="btnFindSave" class="btn accent" type="button">
@@ -49,7 +60,7 @@
         placeholder="ConsExport"
       />
       <p class="hint folder-hint" id="folderHint">
-        Файлы TXT/HTML: Загрузки/<span id="folderPreview">ConsExport</span>/…
+        Файлы и JSON-отчёт: Загрузки/<span id="folderPreview">ConsExport</span>/…
         Без окон — один раз выключите в Chrome «Всегда указывать место для скачивания».
         <button id="btnOpenDownloadsSettings" class="linkish" type="button">
           Открыть настройки загрузок
@@ -76,18 +87,25 @@
 
     <section class="block">
       <div class="label">Прогресс</div>
-      <div id="progressText" class="progress">ожидание</div>
+      <div id="progressText" class="progress" role="status" aria-live="polite">ожидание</div>
       <pre id="log" class="log"></pre>
     </section>
 
-    <section class="block online-tools">
-      <p class="hint">
-        Нужна открытая сессия online.consultant.ru (вы уже вошли). После обновления
-        расширения нажмите «Обновить» на chrome://extensions.
+    <details class="block online-tools">
+      <summary>Диагностика и приватность</summary>
+      <p class="hint diagnostics-hint">
+        Диагностика копирует обезличенное состояние интерфейса. Сохранённый запрос можно
+        удалить вместе с локальными настройками.
       </p>
-      <button id="btnProbe" class="btn secondary" type="button">Разведка UI</button>
-    </section>
+      <div class="diagnostic-actions">
+        <button id="btnProbe" class="btn secondary" type="button">Разведка UI</button>
+        <button id="btnClearData" class="btn secondary" type="button">
+          Очистить локальные данные
+        </button>
+      </div>
+    </details>
 
+    <script src="../shared/runtime.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

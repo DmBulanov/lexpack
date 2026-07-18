@@ -58,7 +58,8 @@ body {
   margin-bottom: 6px;
 }
 
-select {
+select,
+input {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--line);
@@ -141,6 +142,22 @@ select {
   width: 100%;
 }
 
+.online-tools summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.diagnostics-hint {
+  margin-top: 8px;
+}
+
+.diagnostic-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .search-block textarea {
   width: 100%;
   resize: vertical;
@@ -182,6 +199,50 @@ select {
   border-radius: 8px;
   font: inherit;
   background: #fff;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 10px;
+  align-items: end;
+  margin-top: 9px;
+}
+
+.compact-field,
+.check-field {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.compact-field span {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.compact-field input {
+  width: 100%;
+  padding: 6px 8px;
+}
+
+.check-field {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 32px;
+}
+
+.check-field input {
+  width: auto;
+}
+
+.btn:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #1f4b7a;
+  outline-offset: 2px;
 }
 
 .folder-hint {

@@ -1,0 +1,367 @@
+{
+  "legitimateFormatting": {
+    "nodes": [
+      {
+        "tag": "html",
+        "children": [
+          {
+            "tag": "head",
+            "children": [
+              {
+                "tag": "title",
+                "children": [{ "type": "text", "data": "Не дублировать заголовок" }]
+              },
+              {
+                "tag": "style",
+                "children": [{ "type": "text", "data": ".legal-document{display:none}" }]
+              }
+            ]
+          },
+          {
+            "tag": "body",
+            "children": [
+              {
+                "tag": "article",
+                "attributes": {
+                  "class": "legal-document",
+                  "dir": "ltr",
+                  "lang": "ru",
+                  "title": "Судебный акт",
+                  "style": "display:none",
+                  "onclick": "fixture marker"
+                },
+                "children": [
+                  {
+                    "tag": "header",
+                    "children": [
+                      {
+                        "tag": "h1",
+                        "children": [{ "type": "text", "data": "Заголовок документа" }]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "p",
+                    "children": [
+                      { "type": "text", "data": "Обычный " },
+                      {
+                        "tag": "strong",
+                        "children": [{ "type": "text", "data": "жирный" }]
+                      },
+                      { "type": "text", "data": ", " },
+                      {
+                        "tag": "em",
+                        "children": [{ "type": "text", "data": "курсивный" }]
+                      },
+                      { "type": "text", "data": " и " },
+                      {
+                        "tag": "u",
+                        "children": [{ "type": "text", "data": "подчеркнутый" }]
+                      },
+                      { "type": "text", "data": " текст" },
+                      { "tag": "br" },
+                      {
+                        "tag": "span",
+                        "attributes": { "class": "note" },
+                        "children": [
+                          { "type": "text", "data": "H" },
+                          {
+                            "tag": "sub",
+                            "children": [{ "type": "text", "data": "2" }]
+                          },
+                          { "type": "text", "data": "O и x" },
+                          {
+                            "tag": "sup",
+                            "children": [{ "type": "text", "data": "2" }]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "blockquote",
+                    "children": [
+                      {
+                        "tag": "p",
+                        "children": [{ "type": "text", "data": "Цитата из судебного акта" }]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "ol",
+                    "attributes": { "reversed": "", "start": "3", "type": "I" },
+                    "children": [
+                      {
+                        "tag": "li",
+                        "attributes": { "value": "3" },
+                        "children": [{ "type": "text", "data": "Первый пункт" }]
+                      },
+                      {
+                        "tag": "li",
+                        "children": [{ "type": "text", "data": "Второй пункт" }]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "table",
+                    "children": [
+                      {
+                        "tag": "colgroup",
+                        "children": [{ "tag": "col", "attributes": { "span": "2", "width": "160" } }]
+                      },
+                      {
+                        "tag": "caption",
+                        "children": [{ "type": "text", "data": "Расчет" }]
+                      },
+                      {
+                        "tag": "thead",
+                        "children": [
+                          {
+                            "tag": "tr",
+                            "children": [
+                              {
+                                "tag": "th",
+                                "attributes": {
+                                  "abbr": "Сумма",
+                                  "colspan": "2",
+                                  "headers": "amount",
+                                  "rowspan": "1",
+                                  "scope": "col"
+                                },
+                                "children": [{ "type": "text", "data": "Требования" }]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "tag": "tbody",
+                        "children": [
+                          {
+                            "tag": "tr",
+                            "children": [
+                              {
+                                "tag": "td",
+                                "attributes": {
+                                  "abbr": "Долг",
+                                  "colspan": "1",
+                                  "headers": "amount",
+                                  "rowspan": "2"
+                                },
+                                "children": [{ "type": "text", "data": "100 000 руб." }]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "figure",
+                    "children": [
+                      {
+                        "tag": "img",
+                        "attributes": {
+                          "alt": "Схема",
+                          "height": "240",
+                          "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                          "width": "320"
+                        }
+                      },
+                      {
+                        "tag": "figcaption",
+                        "children": [{ "type": "text", "data": "Схема взаимосвязей" }]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "pre",
+                    "children": [
+                      {
+                        "tag": "code",
+                        "children": [{ "type": "text", "data": "абзац 1\nабзац 2" }]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "details",
+                    "children": [
+                      {
+                        "tag": "summary",
+                        "children": [{ "type": "text", "data": "Примечание" }]
+                      },
+                      {
+                        "tag": "p",
+                        "children": [{ "type": "text", "data": "Дополнительный текст" }]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "a",
+                    "attributes": {
+                      "class": "reference",
+                      "title": "Ссылка в исходнике",
+                      "href": "https://www.consultant.ru/document/example/"
+                    },
+                    "children": [{ "type": "text", "data": "Текст ссылки" }]
+                  },
+                  {
+                    "tag": "time",
+                    "attributes": { "datetime": "2026-07-18" },
+                    "children": [{ "type": "text", "data": "18 июля 2026 года" }]
+                  },
+                  {
+                    "tag": "footer",
+                    "children": [
+                      {
+                        "tag": "small",
+                        "children": [{ "type": "text", "data": "Конец документа" }]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "expectedHtml": "<article class=\"legal-document\" dir=\"ltr\" lang=\"ru\" title=\"Судебный акт\"><header><h1>Заголовок документа</h1></header><p>Обычный <strong>жирный</strong>, <em>курсивный</em> и <u>подчеркнутый</u> текст<br><span class=\"note\">H<sub>2</sub>O и x<sup>2</sup></span></p><blockquote><p>Цитата из судебного акта</p></blockquote><ol reversed=\"\" start=\"3\" type=\"I\"><li value=\"3\">Первый пункт</li><li>Второй пункт</li></ol><table><colgroup><col span=\"2\" width=\"160\"></colgroup><caption>Расчет</caption><thead><tr><th abbr=\"Сумма\" colspan=\"2\" headers=\"amount\" rowspan=\"1\" scope=\"col\">Требования</th></tr></thead><tbody><tr><td abbr=\"Долг\" colspan=\"1\" headers=\"amount\" rowspan=\"2\">100 000 руб.</td></tr></tbody></table><figure><img alt=\"Схема\" height=\"240\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=\" width=\"320\"><figcaption>Схема взаимосвязей</figcaption></figure><pre><code>абзац 1\nабзац 2</code></pre><details><summary>Примечание</summary><p>Дополнительный текст</p></details><a class=\"reference\" title=\"Ссылка в исходнике\">Текст ссылки</a><time datetime=\"2026-07-18\">18 июля 2026 года</time><footer><small>Конец документа</small></footer></article>"
+  },
+  "adversarialMarkup": {
+    "nodes": [
+      { "type": "comment", "data": "fixture comment" },
+      {
+        "tag": "head",
+        "children": [
+          { "tag": "title", "children": [{ "type": "text", "data": "hidden head marker" }] },
+          { "tag": "script", "children": [{ "type": "text", "data": "script marker" }] }
+        ]
+      },
+      { "tag": "title", "children": [{ "type": "text", "data": "standalone title marker" }] },
+      { "tag": "style", "children": [{ "type": "text", "data": "style marker" }] },
+      { "tag": "iframe", "children": [{ "type": "text", "data": "frame marker" }] },
+      { "tag": "object", "children": [{ "type": "text", "data": "object marker" }] },
+      { "tag": "embed", "children": [{ "type": "text", "data": "embed marker" }] },
+      { "tag": "svg", "children": [{ "type": "text", "data": "svg marker" }] },
+      { "tag": "math", "children": [{ "type": "text", "data": "math marker" }] },
+      { "tag": "template", "children": [{ "type": "text", "data": "template marker" }] },
+      { "tag": "noscript", "children": [{ "type": "text", "data": "noscript marker" }] },
+      { "tag": "base", "attributes": { "href": "https://example.invalid/" } },
+      { "tag": "meta", "attributes": { "http-equiv": "refresh", "content": "0;url=https://example.invalid/" } },
+      { "tag": "link", "attributes": { "rel": "stylesheet", "href": "https://example.invalid/a.css" } },
+      {
+        "tag": "div",
+        "attributes": {
+          "class": "kept",
+          "title": "kept title",
+          "id": "clobber",
+          "name": "clobber",
+          "style": "display:none",
+          "onload": "event marker",
+          "dir": "sideways",
+          "lang": "ru_RU",
+          "data-extra": "not permitted"
+        },
+        "children": [
+          { "tag": "p", "children": [{ "type": "text", "data": "Visible text" }] },
+          {
+            "tag": "custom-wrapper",
+            "attributes": { "onclick": "event marker" },
+            "children": [
+              { "tag": "b", "children": [{ "type": "text", "data": "wrapped text" }] }
+            ]
+          },
+          {
+            "tag": "form",
+            "attributes": { "action": "https://example.invalid/submit" },
+            "children": [
+              {
+                "tag": "button",
+                "attributes": { "formaction": "javascript:fixture-marker" },
+                "children": [{ "type": "text", "data": "button label" }]
+              }
+            ]
+          },
+          {
+            "tag": "a",
+            "attributes": { "href": "javascript:fixture-marker", "title": "safe title" },
+            "children": [{ "type": "text", "data": "JS link" }]
+          },
+          {
+            "tag": "a",
+            "attributes": { "href": "https://example.invalid/" },
+            "children": [{ "type": "text", "data": "HTTPS link" }]
+          },
+          {
+            "tag": "a",
+            "attributes": { "href": "data:text/html;base64,AAAA" },
+            "children": [{ "type": "text", "data": "data link" }]
+          },
+          {
+            "tag": "img",
+            "attributes": { "alt": "external", "src": "https://example.invalid/image.png", "srcset": "https://example.invalid/2x.png 2x" }
+          },
+          {
+            "tag": "img",
+            "attributes": { "alt": "svg", "src": "data:image/svg+xml;base64,AAAA" }
+          },
+          {
+            "tag": "img",
+            "attributes": { "alt": "malformed", "src": "data:image/png;base64,AAA A" }
+          },
+          {
+            "tag": "img",
+            "attributes": { "alt": "pixel", "src": "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" }
+          },
+          {
+            "tag": "img",
+            "attributes": { "alt": "case-insensitive", "src": "DATA:IMAGE/PNG;BASE64,AAAA" }
+          },
+          {
+            "tag": "q",
+            "attributes": { "cite": "https://example.invalid/source" },
+            "children": [{ "type": "text", "data": "quotation" }]
+          },
+          {
+            "tag": "td",
+            "attributes": {
+              "abbr": "abbr",
+              "headers": "h1",
+              "colspan": "-1",
+              "rowspan": "10000",
+              "onclick": "event marker"
+            },
+            "children": [{ "type": "text", "data": "cell" }]
+          },
+          {
+            "tag": "ol",
+            "attributes": { "reversed": "true", "start": "1.5", "type": "circle" },
+            "children": [
+              {
+                "tag": "li",
+                "attributes": { "value": "3.5" },
+                "children": [{ "type": "text", "data": "item" }]
+              }
+            ]
+          },
+          {
+            "tag": "time",
+            "attributes": { "datetime": "2026-07-18" },
+            "children": [{ "type": "text", "data": "date" }]
+          },
+          {
+            "tag": "p",
+            "attributes": {
+              "xmlns": "http://www.w3.org/2000/svg",
+              "xlink:href": "javascript:fixture-marker",
+              "srcset": "https://example.invalid/image.png"
+            },
+            "children": [{ "type": "text", "data": "namespaced" }]
+          }
+        ]
+      }
+    ],
+    "expectedHtml": "<div class=\"kept\" title=\"kept title\"><p>Visible text</p><b>wrapped text</b>button label<a title=\"safe title\">JS link</a><a>HTTPS link</a><a>data link</a><img alt=\"external\"><img alt=\"svg\"><img alt=\"malformed\"><img alt=\"pixel\" src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==\"><img alt=\"case-insensitive\" src=\"DATA:IMAGE/PNG;BASE64,AAAA\"><q>quotation</q><td abbr=\"abbr\" headers=\"h1\">cell</td><ol reversed=\"true\"><li>item</li></ol><time datetime=\"2026-07-18\">date</time><p>namespaced</p></div>"
+  }
+}

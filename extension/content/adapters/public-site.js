@@ -3,13 +3,49 @@
  * (search results + document pages — no client login required).
  */
 (function () {
+  const CAPABILITIES = Object.freeze({
+    search: true,
+    searchScopes: Object.freeze(["all"]),
+    collectList: true,
+    extractDocument: true,
+    exportFormats: Object.freeze(["txt", "html"]),
+    nativeSave: false,
+  });
+
+  function isConsultantHost(hostname) {
+    const host = String(hostname || "").toLowerCase();
+    return host === "consultant.ru" || host.endsWith(".consultant.ru");
+  }
+
+  function unsupportedScope(scope) {
+    const error = new Error(
+      `Область «${scope}» недоступна на публичном consultant.ru; выберите «Всё по запросу»`
+    );
+    error.code = "UNSUPPORTED_SCOPE";
+    return error;
+  }
+
   const PublicSiteAdapter = {
     id: "public-site",
+
+    capabilities: CAPABILITIES,
+
+    getCapabilities(page = this.detectPage()) {
+      return {
+        ...CAPABILITIES,
+        search: page !== "unsupported",
+        searchReady: page !== "unsupported",
+        resultsReady: page === "list",
+        collectList: page === "list",
+        extractDocument: page === "document",
+        documentReady: page === "document",
+      };
+    },
 
     matches(url) {
       try {
         const u = new URL(url);
-        if (!u.hostname.endsWith("consultant.ru")) return false;
+        if (!isConsultantHost(u.hostname)) return false;
         // Online client hosts are handled by online-app adapter.
         if (/^(login|online|client)\./i.test(u.hostname)) return false;
         return (
@@ -27,7 +63,10 @@
       const path = location.pathname;
       if (path.startsWith("/search")) return "list";
       if (path.startsWith("/document/")) return "document";
-      return "unknown";
+      if (location.hostname === "consultant.ru" || location.hostname === "www.consultant.ru") {
+        return "home";
+      }
+      return "unsupported";
     },
 
     /** Collect document links from a search-results page. */
@@ -52,14 +91,39 @@
     async runSearch(query, options = {}) {
       const q = String(query || "").trim();
       if (!q) throw new Error("Пустой запрос");
+      const scope = options.scope || "all";
+      if (!CAPABILITIES.searchScopes.includes(scope)) {
+        throw unsupportedScope(scope);
+      }
+
       const target = `https://www.consultant.ru/search/?q=${encodeURIComponent(q)}`;
-      if (!location.href.startsWith(target.split("?")[0]) || !location.search.includes("q=")) {
+      const current = new URL(location.href);
+      const currentQuery = current.searchParams.get("q");
+      const isCurrentQuery =
+        current.pathname.startsWith("/search") && currentQuery != null && currentQuery.trim() === q;
+
+      if (!isCurrentQuery) {
         location.assign(target);
         // Navigation will unload this document; caller should wait/re-query.
-        return { query: q, navigating: true, url: target, items: [], count: 0 };
+        return {
+          query: q,
+          scope: "all",
+          scopeApplied: true,
+          navigating: true,
+          url: target,
+          items: [],
+          count: 0,
+        };
       }
       const items = this.collectListItems();
-      return { query: q, scope: options.scope || "all", items, count: items.length, url: location.href };
+      return {
+        query: q,
+        scope: "all",
+        scopeApplied: true,
+        items,
+        count: items.length,
+        url: location.href,
+      };
     },
 
     /**
@@ -102,8 +166,6 @@
 
     probe() {
       return {
-        url: location.href,
-        title: document.title,
         hostname: location.hostname,
         listCount: this.collectListItems().length,
         page: this.detectPage(),
