@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Cons Export — КонсультантПлюс",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "minimum_chrome_version": "120",
   "description": "Поиск и массовое сохранение документов из браузерной версии КонсультантПлюс.",
   "permissions": [

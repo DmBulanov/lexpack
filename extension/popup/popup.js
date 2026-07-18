@@ -9,6 +9,8 @@ const els = {
   btnOpenDownloadsSettings: document.getElementById("btnOpenDownloadsSettings"),
   query: document.getElementById("query"),
   scope: document.getElementById("scope"),
+  instancesBlock: document.getElementById("instancesBlock"),
+  instanceInputs: [...document.querySelectorAll("input[name='instance']")],
   maxItems: document.getElementById("maxItems"),
   rememberQuery: document.getElementById("rememberQuery"),
   btnFind: document.getElementById("btnFind"),
@@ -63,6 +65,18 @@ function maxItemsValue() {
   return Number.isInteger(value) ? Math.min(200, Math.max(1, value)) : 50;
 }
 
+function selectedInstances() {
+  return consNormalizeJudicialInstances(
+    els.instanceInputs.filter((input) => input.checked).map((input) => input.value)
+  );
+}
+
+function updateInstancesState() {
+  const available = currentAdapter === "online-app";
+  els.instancesBlock.hidden = !available;
+  for (const input of els.instanceInputs) input.disabled = !available;
+}
+
 function updateActionState() {
   const formats = currentCapabilities.exportFormats || [];
   const formatSupported = formats.includes(els.format.value);
@@ -72,8 +86,12 @@ function updateActionState() {
     exportRunning || actionPending || currentPage !== "document" || !formatSupported;
   els.btnScan.disabled =
     exportRunning || actionPending || !["list", "search"].includes(currentPage);
-  els.btnFind.disabled = exportRunning || actionPending || currentPage === "auth-required";
-  els.btnFindSave.disabled = exportRunning || actionPending || currentPage === "auth-required";
+  const instancesReady =
+    currentAdapter !== "online-app" || selectedInstances().length > 0;
+  els.btnFind.disabled =
+    exportRunning || actionPending || currentPage === "auth-required" || !instancesReady;
+  els.btnFindSave.disabled =
+    exportRunning || actionPending || currentPage === "auth-required" || !instancesReady;
 }
 
 function applyCapabilities(adapter, page, pageCapabilities = {}) {
@@ -95,6 +113,7 @@ function applyCapabilities(adapter, page, pageCapabilities = {}) {
 
   for (const option of els.scope.options) option.disabled = !scopes.includes(option.value);
   if (!scopes.includes(els.scope.value)) els.scope.value = scopes[0] || "all";
+  updateInstancesState();
 
   for (const option of els.format.options) {
     option.disabled = !currentCapabilities.exportFormats.includes(option.value);
@@ -148,7 +167,10 @@ function applyItems(items, meta = {}) {
   }
   els.log.textContent = cachedItems
     .slice(0, 10)
-    .map((item, offset) => `${item.index || offset + 1}. ${String(item.title || "document").slice(0, 70)}`)
+    .map((item, offset) => {
+      const group = item.instanceLabel ? `[${item.instanceLabel}] ` : "";
+      return `${item.index || offset + 1}. ${group}${String(item.title || "document").slice(0, 70)}`;
+    })
     .join("\n");
   if (cachedItems.length > 10) {
     els.log.textContent += `\n… и ещё ${cachedItems.length - 10}`;
@@ -167,6 +189,7 @@ async function storeSettings() {
     lastFormat: els.format.value,
     downloadFolder: folder,
     maxItems: maxItemsValue(),
+    lastInstances: selectedInstances(),
   };
   if (els.rememberQuery.checked) settings.lastQuery = els.query.value.trim();
   await chrome.storage.local.set(settings);
@@ -184,12 +207,19 @@ async function init() {
     "lastFormat",
     "rememberQuery",
     "maxItems",
+    "lastInstances",
   ]);
   els.rememberQuery.checked = Boolean(stored.rememberQuery);
   if (els.rememberQuery.checked && stored.lastQuery) els.query.value = stored.lastQuery;
   if (!els.rememberQuery.checked && stored.lastQuery) await chrome.storage.local.remove("lastQuery");
   if (stored.lastScope) els.scope.value = stored.lastScope;
   if (stored.lastFormat) els.format.value = stored.lastFormat;
+  const storedInstances = consNormalizeJudicialInstances(stored.lastInstances);
+  if (storedInstances.length) {
+    for (const input of els.instanceInputs) {
+      input.checked = storedInstances.includes(input.value);
+    }
+  }
   els.maxItems.value = String(stored.maxItems || 50);
   const folder = consSanitizeFolder(stored.downloadFolder || "ConsExport");
   els.downloadFolder.value = folder;
@@ -222,7 +252,11 @@ async function init() {
 }
 
 async function scanList() {
-  const response = await tabMessage({ type: "COLLECT_LIST" });
+  const response = await tabMessage({
+    type: "COLLECT_LIST",
+    allResults: true,
+    maxItems: maxItemsValue(),
+  });
   if (!response?.ok) {
     applyItems([], { emptyMessage: response?.error || "Не удалось прочитать список" });
     els.listCount.textContent = "ошибка";
@@ -232,9 +266,28 @@ async function scanList() {
     adapter: response.adapter,
     page: response.page,
     capabilities: response.capabilities,
-    query: "",
-    scope: "current-list",
+    query: response.query || "",
+    scope: response.category?.key
+      ? `current:${response.category.key}`
+      : "current-list",
   });
+  if (response.category?.label) {
+    if (response.categoryTotalKnown) {
+      const suffix = response.truncatedByLimit
+        ? " (достигнут лимит)"
+        : response.incomplete
+          ? " (список дочитан не полностью)"
+          : "";
+      els.progressText.textContent =
+        `${response.category.label}: собрано ${response.count} из ` +
+        `${response.categoryTotal}${suffix}`;
+      els.listCount.textContent = `${response.count} из ${response.categoryTotal}`;
+    } else {
+      els.progressText.textContent =
+        `${response.category.label}: собрано ${response.count}` +
+        (response.truncated ? " (возможна неполная выборка)" : "");
+    }
+  }
   return true;
 }
 
@@ -258,6 +311,7 @@ async function runFind(autoExport) {
       type: "RUN_SEARCH_FLOW",
       query,
       scope,
+      instances: selectedInstances(),
       autoExport,
       format: els.format.value,
       maxItems: maxItemsValue(),
@@ -276,7 +330,9 @@ async function runFind(autoExport) {
     });
     els.progressText.textContent = response.exportStarted
       ? `сохраняем ${response.count} док.${response.truncated ? " (с учётом лимита)" : ""}`
-      : `найдено: ${response.count || 0}`;
+      : `найдено: ${response.count || 0}${
+          response.truncated ? " (достигнут лимит)" : ""
+        }`;
     if (response.exportStarted) {
       exportRunning = true;
       pollWhileRunning();
@@ -374,7 +430,17 @@ els.query.addEventListener("keydown", (event) => {
 
 els.downloadFolder.addEventListener("change", () => storeSettings());
 els.format.addEventListener("change", () => storeSettings().then(updateActionState));
-els.scope.addEventListener("change", () => storeSettings());
+els.scope.addEventListener("change", () => {
+  updateInstancesState();
+  updateActionState();
+  storeSettings();
+});
+for (const input of els.instanceInputs) {
+  input.addEventListener("change", () => {
+    updateActionState();
+    storeSettings();
+  });
+}
 els.maxItems.addEventListener("change", () => storeSettings());
 els.rememberQuery.addEventListener("change", () => storeSettings());
 
@@ -427,6 +493,9 @@ els.btnClearData.addEventListener("click", async () => {
   els.downloadFolder.value = "ConsExport";
   els.folderPreview.textContent = "ConsExport";
   els.maxItems.value = "50";
+  for (const input of els.instanceInputs) {
+    input.checked = ["higher-courts", "arbitration-circuit"].includes(input.value);
+  }
   applyItems([], { emptyMessage: "Список очищен" });
   setLog("Локальные настройки, запрос и история экспорта удалены");
   await refreshProgress();

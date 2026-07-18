@@ -31,7 +31,7 @@ test("unpacked MV3 extension starts its service worker in Chromium", async (t) =
 
   const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.0");
+  assert.equal(manifest.version, "0.6.0");
   assert.equal(manifest.minimum_chrome_version, "120");
   assert.deepEqual(
     [...manifest.host_permissions].sort(),

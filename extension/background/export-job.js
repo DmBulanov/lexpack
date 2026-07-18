@@ -16,6 +16,8 @@
       sourceIndex: item.index ?? offset + 1,
       title: String(item.title || `document-${offset + 1}`),
       url: String(item.url || ""),
+      instance: item.instance || null,
+      instanceLabel: item.instanceLabel || null,
       status: "queued",
       attempts: 0,
       error: null,

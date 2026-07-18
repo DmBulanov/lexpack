@@ -11,10 +11,25 @@ const {
   consMatchesNativeDownload,
   consNativeDownloadDecision,
   consNormalizeDocumentUrl,
+  consNormalizeJudicialInstances,
   consProvenanceUrl,
   consRedactUrl,
   consSanitizeFolder,
 } = require("../extension/shared/runtime.js");
+
+test("judicial instance selection is a closed, deduplicated allowlist", () => {
+  assert.deepEqual(
+    consNormalizeJudicialInstances([
+      "arbitration-first",
+      "evil-instance",
+      "higher-courts",
+      "arbitration-first",
+      null,
+    ]),
+    ["arbitration-first", "higher-courts"]
+  );
+  assert.deepEqual(consNormalizeJudicialInstances("arbitration-first"), []);
+});
 
 test("copied diagnostics contain only allowlisted structural fields and closed events", () => {
   const snapshot = consBuildSafeDiagnosticsSnapshot(

@@ -34,6 +34,26 @@ test("background owns query navigation and verifies query, scope, and settled re
   assert.doesNotMatch(source, /sendToTab\(tab\.id, \{\s*type: "RUN_SEARCH"/);
 });
 
+test("online practice continues through all results and selected court instances", () => {
+  assert.match(source, /type: "OPEN_FULL_RESULTS"/);
+  assert.match(source, /observeOpenedFullResultsTab\(tab, prepared\.fullResultsUrl\)/);
+  assert.match(source, /activate: false/);
+  assert.match(source, /activate: true/);
+  assert.match(source, /isExpectedFullResultsUrl/);
+  assert.match(source, /isOnlineFullResultsUrl/);
+  assert.match(source, /type: "GET_FULL_RESULTS_STATE"/);
+  assert.match(source, /type: "SELECT_JUDICIAL_CATEGORY"/);
+  assert.match(source, /consNormalizeJudicialInstances/);
+  assert.match(source, /waitFullResultsState\(tab\.id, query, instance, selected\)/);
+  assert.match(source, /Number\(state\?\.resultsRevision/);
+  assert.match(source, /allResults: true,[\s\S]{0,100}maxItems,[\s\S]{0,100}query,[\s\S]{0,100}category: instance/);
+  assert.match(source, /category: instance,[\s\S]{0,60}prevalidated: true/);
+  assert.match(source, /response\.query !== query \|\| response\.category\?\.key !== instance/);
+  assert.match(source, /searchItemIdentity/);
+  assert.match(source, /fullResultsTabId/);
+  assert.match(source, /if \(ping\.adapter === "online-app"\)/);
+});
+
 test("export waits for the document pane and native controls", () => {
   assert.match(source, /await waitDocumentReady\(tab\.id, job\.format, job\.id\)/);
   assert.match(source, /ping\.capabilities\.wordSaveReady \|\| ping\.capabilities\.menuSaveReady/);
@@ -79,4 +99,5 @@ test("all export item URLs cross the shared allowlist boundary", () => {
   assert.doesNotMatch(source, /fetch\(item\.url/);
   assert.doesNotMatch(source, /function parsePublicDocument/);
   assert.match(source, /canonicalUrl: consProvenanceUrl\(doc\?\.url \|\| fallbackUrl\)/);
+  assert.match(source, /CONS_JUDICIAL_INSTANCE_LABELS\[instance\]\) \|\| categoryLabel \|\| null/);
 });

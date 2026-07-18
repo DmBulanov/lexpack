@@ -774,6 +774,8 @@ function serializeJobReport(job) {
       items: job.items.map((item) => ({
         index: item.index,
         title: item.title,
+        instance: item.instance,
+        instanceLabel: item.instanceLabel,
         sourceUrl: consProvenanceUrl(item.url),
         status: item.status,
         filename: item.filename,
@@ -1026,11 +1028,22 @@ function normalizeItems(items, adapter, requestedLimit) {
   const limit = Number.isInteger(parsedLimit) && parsedLimit > 0
     ? Math.min(parsedLimit, MAX_EXPORT_ITEMS)
     : MAX_EXPORT_ITEMS;
-  return items.slice(0, limit).map((item, offset) => ({
-    index: offset + 1,
-    title: String(item?.title || `document-${offset + 1}`).slice(0, 500),
-    url: consNormalizeDocumentUrl(item?.url, adapter),
-  }));
+  return items.slice(0, limit).map((item, offset) => {
+    const instance = consNormalizeJudicialInstances([item?.instance])[0] || null;
+    const categoryLabel = String(item?.instanceLabel || "")
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200);
+    return {
+      index: offset + 1,
+      title: String(item?.title || `document-${offset + 1}`).slice(0, 500),
+      url: consNormalizeDocumentUrl(item?.url, adapter),
+      instance,
+      instanceLabel:
+        (instance && CONS_JUDICIAL_INSTANCE_LABELS[instance]) || categoryLabel || null,
+    };
+  });
 }
 
 async function startExportJob(options) {
@@ -1107,8 +1120,335 @@ async function findSearchTab() {
   return null;
 }
 
+function isOnlineFullResultsUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return (
+      url.protocol === "https:" &&
+      consIsConsultantHost(url.hostname) &&
+      !["consultant.ru", "www.consultant.ru", "login.consultant.ru"].includes(
+        url.hostname
+      ) &&
+      !url.username &&
+      !url.password &&
+      url.searchParams.get("req") === "query"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExpectedFullResultsUrl(rawUrl, expectedUrl) {
+  try {
+    const actual = new URL(rawUrl);
+    const expected = new URL(expectedUrl);
+    actual.hash = "";
+    expected.hash = "";
+    return (
+      isOnlineFullResultsUrl(actual.href) &&
+      actual.origin === expected.origin &&
+      actual.pathname === expected.pathname &&
+      actual.search === expected.search
+    );
+  } catch {
+    return false;
+  }
+}
+
+function observeOpenedFullResultsTab(openerTab, expectedUrl) {
+  let settled = false;
+  let timeoutId = null;
+  const candidates = new Set([openerTab.id]);
+  let resolvePromise;
+  let rejectPromise;
+  const promise = new Promise((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+
+  const cleanup = () => {
+    if (timeoutId != null) clearTimeout(timeoutId);
+    chrome.tabs.onCreated.removeListener(onCreated);
+    chrome.tabs.onUpdated.removeListener(onUpdated);
+  };
+  const finish = (tab) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolvePromise(tab);
+  };
+  const fail = () => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    const error = new Error("Не открылась вкладка «Все результаты поиска»");
+    error.code = "FULL_RESULTS_TAB_TIMEOUT";
+    rejectPromise(error);
+  };
+  const onCreated = (tab) => {
+    if (tab.windowId !== openerTab.windowId) return;
+    candidates.add(tab.id);
+    if (isExpectedFullResultsUrl(tab.pendingUrl || tab.url, expectedUrl)) finish(tab);
+  };
+  const onUpdated = (tabId, changeInfo, tab) => {
+    if (!candidates.has(tabId)) return;
+    if (isExpectedFullResultsUrl(changeInfo.url || tab.url, expectedUrl)) finish(tab);
+  };
+
+  chrome.tabs.onCreated.addListener(onCreated);
+  chrome.tabs.onUpdated.addListener(onUpdated);
+  timeoutId = setTimeout(fail, TAB_TIMEOUT_MS);
+  return {
+    promise,
+    dispose() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+    },
+  };
+}
+
+async function waitFullResultsState(tabId, query, category = "", transition = null) {
+  const deadline = Date.now() + TAB_TIMEOUT_MS;
+  let stableKey = "";
+  let stableSince = 0;
+  let sawLoading = false;
+  let lastError = "Полная выдача ещё не готова";
+  while (Date.now() < deadline) {
+    try {
+      const response = await sendToTab(tabId, {
+        type: "GET_FULL_RESULTS_STATE",
+        query,
+        category,
+      });
+      if (response?.code === "AUTH_REQUIRED") {
+        const error = new Error("Сессия завершилась; войдите повторно");
+        error.code = "AUTH_REQUIRED";
+        throw error;
+      }
+      if (!response?.ok) {
+        lastError = response?.error || lastError;
+      } else {
+        const state = response.state;
+        if (state?.loading === true) sawLoading = true;
+        const transitioned =
+          !transition?.triggered ||
+          sawLoading ||
+          state?.emptyResults === true ||
+          state?.resultSignature !== transition.beforeSignature ||
+          Number(state?.resultsRevision || 0) > Number(transition.beforeRevision || 0);
+        const ready =
+          state?.fullResults === true &&
+          state.queryMatches === true &&
+          state.queryAuthoritative === true &&
+          state.resultsReady === true &&
+          state.loading !== true &&
+          (!category || state.activeCategory === category) &&
+          transitioned;
+        if (ready) {
+          const key = [
+            state.activeCategory || "",
+            state.categoryTotal ?? "",
+            state.resultSignature || "",
+            Number(state.resultsRevision || 0),
+          ].join(":");
+          if (key !== stableKey) {
+            stableKey = key;
+            stableSince = Date.now();
+          }
+          if (Date.now() - stableSince >= 800) return state;
+        } else {
+          stableKey = "";
+          stableSince = 0;
+        }
+      }
+    } catch (error) {
+      if (error?.code === "AUTH_REQUIRED") throw error;
+      lastError = errorText(error);
+      stableKey = "";
+      stableSince = 0;
+    }
+    await delay(300);
+  }
+  const error = new Error(lastError);
+  error.code = "FULL_RESULTS_TIMEOUT";
+  throw error;
+}
+
+async function openOnlineFullResultsTab(tab, query) {
+  if (isOnlineFullResultsUrl(tab.url)) {
+    await waitFullResultsState(tab.id, query);
+    return await chrome.tabs.get(tab.id);
+  }
+
+  const prepared = await sendToTab(tab.id, {
+    type: "OPEN_FULL_RESULTS",
+    activate: false,
+  });
+  if (!prepared?.ok) {
+    const error = new Error(prepared?.error || "Не удалось открыть полную выдачу");
+    error.code = prepared?.code || "FULL_RESULTS_OPEN_FAILED";
+    throw error;
+  }
+  if (prepared.alreadyOpen) {
+    await waitFullResultsState(tab.id, query);
+    return await chrome.tabs.get(tab.id);
+  }
+  if (!isOnlineFullResultsUrl(prepared.fullResultsUrl)) {
+    const error = new Error("Получен неожиданный адрес полной выдачи");
+    error.code = "FULL_RESULTS_INVALID_URL";
+    throw error;
+  }
+  const opened = observeOpenedFullResultsTab(tab, prepared.fullResultsUrl);
+  try {
+    const activated = await sendToTab(tab.id, {
+      type: "OPEN_FULL_RESULTS",
+      activate: true,
+    });
+    if (
+      !activated?.ok ||
+      !activated.triggered ||
+      !isExpectedFullResultsUrl(activated.fullResultsUrl, prepared.fullResultsUrl)
+    ) {
+      const error = new Error(
+        activated?.error || "Не удалось перейти к полной выдаче"
+      );
+      error.code = activated?.code || "FULL_RESULTS_OPEN_FAILED";
+      throw error;
+    }
+    const fullTab = await opened.promise;
+    await waitTabComplete(fullTab.id, TAB_TIMEOUT_MS);
+    const ping = await waitContentReady(fullTab.id);
+    if (ping.authRequired || ping.adapter !== "online-app") {
+      const error = new Error("Полная выдача КонсультантПлюс недоступна");
+      error.code = ping.authRequired ? "AUTH_REQUIRED" : "ADAPTER_CHANGED";
+      throw error;
+    }
+    await waitFullResultsState(fullTab.id, query);
+    return await chrome.tabs.get(fullTab.id);
+  } catch (error) {
+    opened.dispose();
+    throw error;
+  }
+}
+
+function searchItemIdentity(item) {
+  try {
+    const url = new URL(item?.url);
+    const base = url.searchParams.get("base") || "";
+    const strongId =
+      url.searchParams.get("n") ||
+      url.searchParams.get("doc") ||
+      url.searchParams.get("id") ||
+      "";
+    return base && strongId
+      ? `${url.hostname}:${base}:${strongId}`
+      : consRedactUrl(url.href);
+  } catch {
+    return String(item?.url || "");
+  }
+}
+
+async function collectJudicialInstances(tab, query, requestedInstances, requestedLimit) {
+  const instances = consNormalizeJudicialInstances(requestedInstances);
+  if (!instances.length) throw new Error("Выберите хотя бы одну судебную инстанцию");
+  const parsedLimit = Number(requestedLimit);
+  const maxItems = Number.isInteger(parsedLimit)
+    ? Math.max(1, Math.min(MAX_EXPORT_ITEMS, parsedLimit))
+    : 50;
+  const collected = new Map();
+  const breakdown = [];
+  const unavailableInstances = [];
+  let truncated = false;
+
+  for (const instance of instances) {
+    if (collected.size >= maxItems) {
+      truncated = true;
+      break;
+    }
+    const selected = await sendToTab(tab.id, {
+      type: "SELECT_JUDICIAL_CATEGORY",
+      category: instance,
+    });
+    if (!selected?.ok) {
+      if (["INSTANCE_NOT_FOUND", "UNSUPPORTED_INSTANCE"].includes(selected?.code)) {
+        unavailableInstances.push(instance);
+        continue;
+      }
+      const error = new Error(selected?.error || "Не удалось выбрать судебную инстанцию");
+      error.code = selected?.code || "INSTANCE_SELECT_FAILED";
+      throw error;
+    }
+    const state = await waitFullResultsState(tab.id, query, instance, selected);
+    const response = await sendToTab(tab.id, {
+      type: "COLLECT_LIST",
+      allResults: true,
+      maxItems,
+      query,
+      category: instance,
+      prevalidated: true,
+    });
+    if (!response?.ok) {
+      const error = new Error(response?.error || "Не удалось собрать выбранную категорию");
+      error.code = response?.code || "COLLECT_LIST_FAILED";
+      throw error;
+    }
+    if (response.query !== query || response.category?.key !== instance) {
+      const error = new Error("Страница переключилась на другую поисковую выдачу");
+      error.code = "FULL_RESULTS_STATE_MISMATCH";
+      throw error;
+    }
+    if (response.incomplete) {
+      const error = new Error(
+        "Не удалось дочитать выбранную категорию до ожидаемого количества"
+      );
+      error.code = "COLLECTION_INCOMPLETE";
+      throw error;
+    }
+    const availableNewKeys = new Set();
+    for (const item of response.items || []) {
+      const key = searchItemIdentity(item);
+      if (key && !collected.has(key)) availableNewKeys.add(key);
+    }
+    let added = 0;
+    for (const item of response.items || []) {
+      const key = searchItemIdentity(item);
+      if (!key || collected.has(key)) continue;
+      collected.set(key, {
+        ...item,
+        instance,
+        instanceLabel:
+          response.category?.label || CONS_JUDICIAL_INSTANCE_LABELS[instance] || instance,
+      });
+      added += 1;
+      if (collected.size >= maxItems) break;
+    }
+    if (added < availableNewKeys.size) truncated = true;
+    breakdown.push({
+      instance,
+      label: response.category?.label || CONS_JUDICIAL_INSTANCE_LABELS[instance] || instance,
+      total: Number.isInteger(response.categoryTotal)
+        ? response.categoryTotal
+        : Number.isInteger(state.categoryTotal)
+          ? state.categoryTotal
+          : response.count,
+      collected: added,
+    });
+    if (response.truncated) truncated = true;
+  }
+
+  if (!collected.size && unavailableInstances.length === instances.length) {
+    throw new Error("Выбранные судебные инстанции отсутствуют в этой выдаче");
+  }
+  const items = [...collected.values()].map((item, index) => ({
+    ...item,
+    index: index + 1,
+  }));
+  return { items, instances, breakdown, unavailableInstances, truncated };
+}
+
 async function executeSearchFlow(message) {
-  const query = String(message.query || "").trim();
+  const query = String(message.query || "").replace(/\s+/g, " ").trim();
   if (!query) throw new Error("Введите запрос");
   if (query.length > 2000) throw new Error("Запрос не должен превышать 2000 символов");
 
@@ -1139,7 +1479,52 @@ async function executeSearchFlow(message) {
     delay,
     timeoutMs: CONTENT_TIMEOUT_MS,
   });
-  const result = await searchFlow.run({ tab, adapter: ping.adapter, query, scope });
+  let result;
+  if (ping.adapter === "online-app") {
+    let fullTab = null;
+    if (isOnlineFullResultsUrl(tab.url)) {
+      try {
+        const current = await sendToTab(tab.id, {
+          type: "GET_FULL_RESULTS_STATE",
+          query,
+        });
+        if (
+          current?.ok &&
+          current.state?.queryMatches === true &&
+          current.state?.queryAuthoritative === true
+        ) {
+          await waitFullResultsState(tab.id, query);
+          fullTab = tab;
+        }
+      } catch (error) {
+        if (error?.code === "AUTH_REQUIRED") throw error;
+      }
+    }
+    if (!fullTab) {
+      await searchFlow.run({ tab, adapter: ping.adapter, query, scope });
+      tab = await chrome.tabs.get(tab.id);
+      fullTab = await openOnlineFullResultsTab(tab, query);
+    }
+    const collected = await collectJudicialInstances(
+      fullTab,
+      query,
+      message.instances || ["higher-courts", "arbitration-circuit"],
+      message.maxItems
+    );
+    result = {
+      adapter: "online-app",
+      query,
+      scope,
+      scopeApplied: true,
+      fullResults: true,
+      fullResultsTabId: fullTab.id,
+      ...collected,
+      count: collected.items.length,
+      emptyResults: collected.items.length === 0,
+    };
+  } else {
+    result = await searchFlow.run({ tab, adapter: ping.adapter, query, scope });
+  }
 
   if (message.autoExport && result.items?.length) {
     const started = await startExportJob({
@@ -1155,7 +1540,7 @@ async function executeSearchFlow(message) {
       items: started.job.items,
       count: started.job.items.length,
       exportStarted: true,
-      truncated: started.truncated,
+      truncated: Boolean(result.truncated || started.truncated),
       jobId: started.job.id,
     };
   }
@@ -1328,6 +1713,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "downloadFolder",
           "rememberQuery",
           "maxItems",
+          "lastInstances",
         ]);
         await chrome.storage.session.remove([JOB_STORAGE_KEY, PROGRESS_STORAGE_KEY]);
         return { ok: true };

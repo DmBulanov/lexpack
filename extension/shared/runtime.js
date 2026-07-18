@@ -39,6 +39,18 @@
   ]);
 
   const CONS_FORMATS = Object.freeze(["docx", "pdf", "rtf", "txt", "html"]);
+  const CONS_JUDICIAL_INSTANCES = Object.freeze([
+    "higher-courts",
+    "arbitration-circuit",
+    "arbitration-first",
+    "arbitration-rulings",
+  ]);
+  const CONS_JUDICIAL_INSTANCE_LABELS = Object.freeze({
+    "higher-courts": "Решения высших судов",
+    "arbitration-circuit": "Арбитражные суды округов",
+    "arbitration-first": "Арбитражные суды первой инстанции",
+    "arbitration-rulings": "Определения арбитражных судов",
+  });
   const CONS_ADAPTER_CAPABILITIES = Object.freeze({
     "online-app": Object.freeze({
       search: true,
@@ -112,6 +124,12 @@
     const result = new URL("https://www.consultant.ru/search/");
     result.searchParams.set("q", normalizedSearchQuery(query));
     return result.href;
+  }
+
+  function consNormalizeJudicialInstances(value) {
+    const source = Array.isArray(value) ? value : [];
+    const allowed = new Set(CONS_JUDICIAL_INSTANCES);
+    return [...new Set(source.map((entry) => String(entry || "")).filter((entry) => allowed.has(entry)))];
   }
 
   function consNormalizeDocumentUrl(rawUrl, adapterId) {
@@ -348,9 +366,12 @@
     CONS_DOWNLOAD_DIAGNOSTIC_CODES,
     CONS_ADAPTER_CAPABILITIES,
     CONS_FORMATS,
+    CONS_JUDICIAL_INSTANCES,
+    CONS_JUDICIAL_INSTANCE_LABELS,
     consAssertFormatSupported,
     consBuildOnlineSearchUrl,
     consBuildPublicSearchUrl,
+    consNormalizeJudicialInstances,
     consGetAdapterCapabilities,
     consIsConsultantHost,
     consIsConsultantPageUrl,

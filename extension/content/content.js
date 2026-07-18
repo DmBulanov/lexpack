@@ -64,7 +64,21 @@
               message
             );
           }
-          const items = adapter.collectListItems();
+          const collection =
+            msg.allResults && typeof adapter.collectAllListItems === "function"
+              ? await adapter.collectAllListItems({
+                  maxItems: msg.maxItems,
+                  query: msg.query,
+                  category: msg.category,
+                  prevalidated: msg.prevalidated === true,
+                })
+              : adapter.collectListItems();
+          const items = Array.isArray(collection) ? collection : collection.items || [];
+          const collectionMeta = Array.isArray(collection) ? {} : collection;
+          const category =
+            typeof adapter.currentResultCategory === "function"
+              ? adapter.currentResultCategory()
+              : { key: null, label: "" };
           return {
             ok: true,
             adapter: adapter.id,
@@ -72,6 +86,17 @@
             capabilities,
             items,
             count: items.length,
+            query:
+              typeof adapter.currentSearchQuery === "function"
+                ? adapter.currentSearchQuery()
+                : "",
+            category,
+            categoryTotal: collectionMeta.categoryTotal ?? null,
+            categoryTotalKnown: collectionMeta.categoryTotalKnown === true,
+            truncated: collectionMeta.truncated === true,
+            truncatedByLimit: collectionMeta.truncatedByLimit === true,
+            incomplete: collectionMeta.incomplete === true,
+            reachedEnd: collectionMeta.reachedEnd === true,
           };
         }
 
@@ -170,6 +195,58 @@
             ok: true,
             adapter: adapter.id,
             ...adapter.triggerSearchScope(scope),
+          };
+        }
+
+        case "OPEN_FULL_RESULTS": {
+          if (
+            adapter.id !== "online-app" ||
+            typeof adapter.triggerFullResults !== "function"
+          ) {
+            return errorResponse(
+              "FULL_RESULTS_UNSUPPORTED",
+              "Полная сгруппированная выдача недоступна на этой странице"
+            );
+          }
+          return {
+            ok: true,
+            adapter: adapter.id,
+            ...adapter.triggerFullResults({ activate: msg.activate === true }),
+          };
+        }
+
+        case "GET_FULL_RESULTS_STATE": {
+          if (
+            adapter.id !== "online-app" ||
+            typeof adapter.fullResultsState !== "function" ||
+            !adapter.isFullResultsPage?.()
+          ) {
+            return errorResponse(
+              "FULL_RESULTS_REQUIRED",
+              "Откройте «Все результаты поиска»"
+            );
+          }
+          return {
+            ok: true,
+            adapter: adapter.id,
+            state: adapter.fullResultsState(msg.query, msg.category),
+          };
+        }
+
+        case "SELECT_JUDICIAL_CATEGORY": {
+          if (
+            adapter.id !== "online-app" ||
+            typeof adapter.triggerJudicialCategory !== "function"
+          ) {
+            return errorResponse(
+              "FULL_RESULTS_REQUIRED",
+              "Выбор судебной инстанции доступен в полной выдаче"
+            );
+          }
+          return {
+            ok: true,
+            adapter: adapter.id,
+            ...(await adapter.triggerJudicialCategory(msg.category)),
           };
         }
 

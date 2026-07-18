@@ -25,6 +25,30 @@
         <option value="practice">Судебная практика</option>
         <option value="all">Всё по запросу</option>
       </select>
+      <fieldset id="instancesBlock" class="instances-block">
+        <legend>Судебные инстанции</legend>
+        <label class="instance-option">
+          <input type="checkbox" name="instance" value="higher-courts" checked />
+          <span>Высшие суды</span>
+        </label>
+        <label class="instance-option">
+          <input type="checkbox" name="instance" value="arbitration-circuit" checked />
+          <span>Арбитражные суды округов (кассация)</span>
+        </label>
+        <label class="instance-option">
+          <input type="checkbox" name="instance" value="arbitration-first" />
+          <span>Арбитражные суды первой инстанции</span>
+        </label>
+        <label class="instance-option">
+          <input type="checkbox" name="instance" value="arbitration-rulings" />
+          <span>Определения арбитражных судов</span>
+        </label>
+        <p class="hint instances-hint">
+          Можно выбрать несколько. Поиск перейдёт в «Все результаты поиска» и
+          объединит выбранные категории без дублей. В online-версии инстанции
+          применяются и к области «Всё по запросу».
+        </p>
+      </fieldset>
       <div class="field-row">
         <label class="compact-field" for="maxItems">
           <span>Лимит документов</span>
@@ -75,9 +99,9 @@
     </section>
 
     <section class="actions">
-      <button id="btnScan" class="btn secondary" type="button">Сканировать список</button>
+      <button id="btnScan" class="btn secondary" type="button">Собрать открытую категорию</button>
       <button id="btnExport" class="btn secondary" type="button" disabled>
-        Экспорт текущего списка
+        Выгрузить открытую категорию
       </button>
       <button id="btnOne" class="btn secondary" type="button">
         Сохранить текущий

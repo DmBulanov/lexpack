@@ -26,6 +26,13 @@
   const NATIVE_FORMATS = new Set(Object.keys(FORMAT_MATCH));
 
   const SEARCH_SCOPES = Object.freeze(["all", "practice"]);
+  const FULL_RESULTS_LINK_SELECTOR = ".x-pages-search-plus-results-link";
+  const JUDICIAL_CATEGORY_PATTERNS = Object.freeze({
+    "higher-courts": /^Решения высших судов$/i,
+    "arbitration-circuit": /^Арбитражные суды округов$/i,
+    "arbitration-first": /^Арбитражные суды первой инстанции$/i,
+    "arbitration-rulings": /^Определения арбитражных судов$/i,
+  });
 
   function isConsultantHost(hostname) {
     const host = String(hostname || "").toLowerCase();
@@ -54,6 +61,37 @@
       hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0).toString(16);
+  }
+
+  function documentIdentity(rawUrl) {
+    try {
+      const url = new URL(rawUrl, location.href);
+      const base = url.searchParams.get("base") || "";
+      const strongId =
+        url.searchParams.get("n") ||
+        url.searchParams.get("doc") ||
+        url.searchParams.get("id") ||
+        "";
+      return base && strongId
+        ? `${url.origin}${url.pathname}?base=${base}&id=${strongId}`
+        : url.href;
+    } catch {
+      return String(rawUrl || "");
+    }
+  }
+
+  function categoryKeyForLabel(label) {
+    const value = normalizedText(label);
+    return (
+      Object.entries(JUDICIAL_CATEGORY_PATTERNS).find(([, pattern]) =>
+        pattern.test(value)
+      )?.[0] || null
+    );
+  }
+
+  function stripQuotedQuery(value) {
+    const normalized = normalizedText(value);
+    return normalized.replace(/^["«“](.*)["»”]$/, "$1").trim();
   }
 
   function isPresetActive(element) {
@@ -129,6 +167,7 @@
       ) {
         return "document";
       }
+      if (/[?&]req=query\b/i.test(location.search)) return "list";
       if (
         document.querySelector(
           "a.x-page-components-search-result-item__extra-title, .x-page-components-search-result-item"
@@ -170,31 +209,408 @@
       );
     },
 
-    collectListItems() {
+    collectListItems(root = document) {
       const items = [];
       const seen = new Set();
-      const links = document.querySelectorAll(
-        "a.x-page-components-search-result-item__extra-title, a.x-page-components-search-result-item__extra-text"
+      const links = root.querySelectorAll(
+        [
+          "a.x-page-components-search-result-item__extra-title",
+          "a.x-page-components-search-result-item__extra-text",
+          ".x-page-search-results__list a[href*='req=doc']",
+        ].join(", ")
       );
 
       links.forEach((a) => {
         const href = a.href;
-        if (!href || seen.has(href)) return;
+        const identity = documentIdentity(href);
+        if (!href || seen.has(identity)) return;
         if (!/[?&]req=doc\b/i.test(href)) return;
-        seen.add(href);
-        const title = a.innerText.replace(/\s+/g, " ").trim();
+        seen.add(identity);
+        const title = normalizedText(
+          a.querySelector?.(".TH")?.innerText ||
+            a.querySelector?.(".TH")?.textContent ||
+            a.innerText ||
+            a.textContent
+        );
         if (!title) return;
         items.push({
           index: items.length + 1,
           title,
           url: href,
+          instance: this.currentResultCategory().key,
+          instanceLabel: this.currentResultCategory().label,
         });
       });
 
       return items;
     },
 
+    async collectAllListItems(options = {}) {
+      const parsedLimit = Number(options.maxItems);
+      const maxItems = Number.isInteger(parsedLimit)
+        ? Math.max(1, Math.min(200, parsedLimit))
+        : 200;
+      if (this.isFullResultsPage() && options.prevalidated !== true) {
+        const deadline = Date.now() + 5000;
+        let stableKey = "";
+        let stableSince = 0;
+        let ready = false;
+        while (Date.now() < deadline) {
+          const current = this.fullResultsState(this.currentSearchQuery());
+          if (current.resultsReady && !current.loading) {
+            const key = [
+              current.activeCategory || current.activeCategoryLabel,
+              current.categoryTotal ?? "",
+              current.resultSignature,
+              current.resultsRevision,
+            ].join(":");
+            if (key !== stableKey) {
+              stableKey = key;
+              stableSince = Date.now();
+            }
+            if (Date.now() - stableSince >= 1500) {
+              ready = true;
+              break;
+            }
+          } else {
+            stableKey = "";
+            stableSince = 0;
+          }
+          await sleep(150);
+        }
+        if (!ready) {
+          throw adapterError(
+            "COLLECTION_NOT_READY",
+            "Открытая категория ещё формируется; дождитесь обновления списка и повторите"
+          );
+        }
+      }
+      const list = document.querySelector(
+        ".x-page-search-results__list.x-list, .x-page-search-results__list"
+      );
+      const initialCategory = this.currentResultCategory();
+      const initialQuery = this.currentSearchQuery();
+      const expectedQuery = normalizedText(options.query || initialQuery);
+      const expectedCategory = normalizedText(
+        options.category || initialCategory.key || initialCategory.label
+      );
+      const ensureUnchanged = () => {
+        if (!this.isFullResultsPage()) return;
+        const currentCategory = this.currentResultCategory();
+        const currentCategoryValue = normalizedText(
+          currentCategory.key || currentCategory.label
+        );
+        if (
+          (expectedQuery && this.currentSearchQuery() !== expectedQuery) ||
+          (expectedCategory && currentCategoryValue !== expectedCategory)
+        ) {
+          throw adapterError(
+            "COLLECTION_STATE_CHANGED",
+            "Поисковая выдача или выбранная категория изменилась во время сбора"
+          );
+        }
+      };
+      ensureUnchanged();
+
+      const state = this.isFullResultsPage() ? this.fullResultsState(expectedQuery) : null;
+      const categoryTotal = Number.isInteger(state?.categoryTotal)
+        ? state.categoryTotal
+        : null;
+      const categoryTotalKnown = categoryTotal !== null;
+      const decorate = (items) =>
+        items.map((item, index) => ({
+          ...item,
+          index: index + 1,
+          instance: initialCategory.key,
+          instanceLabel: initialCategory.label,
+        }));
+      const summarize = (items, reachedEnd) => {
+        const moreCollectedThanLimit = items.length > maxItems;
+        const decorated = decorate(items.slice(0, maxItems));
+        const truncatedByLimit = categoryTotalKnown
+          ? categoryTotal > decorated.length && decorated.length >= maxItems
+          : moreCollectedThanLimit || (decorated.length >= maxItems && !reachedEnd);
+        const incomplete =
+          categoryTotalKnown &&
+          decorated.length < Math.min(categoryTotal, maxItems) &&
+          reachedEnd;
+        return {
+          items: decorated,
+          categoryTotal,
+          categoryTotalKnown,
+          truncated: truncatedByLimit || incomplete,
+          truncatedByLimit,
+          incomplete,
+          reachedEnd,
+        };
+      };
+
+      if (!list) {
+        const items = this.collectListItems();
+        ensureUnchanged();
+        return summarize(items, true);
+      }
+
+      let container = list;
+      let candidate = list;
+      while (candidate && candidate !== document.body) {
+        if (
+          Number(candidate.clientHeight || 0) > 0 &&
+          Number(candidate.scrollHeight || 0) > Number(candidate.clientHeight || 0)
+        ) {
+          container = candidate;
+          break;
+        }
+        candidate = candidate.parentElement;
+      }
+      if (
+        Number(container.scrollHeight || 0) <= Number(container.clientHeight || 0) &&
+        document.scrollingElement
+      ) {
+        container = document.scrollingElement;
+      }
+
+      const collectionRoot = container === document.scrollingElement ? document : container;
+      const originalScrollTop = Number(container.scrollTop || 0);
+      const collected = new Map();
+      const collectVisible = () => {
+        ensureUnchanged();
+        for (const item of this.collectListItems(collectionRoot)) {
+          const key = documentIdentity(item.url);
+          if (!collected.has(key)) collected.set(key, item);
+          if (collected.size >= maxItems) break;
+        }
+      };
+      const moveTo = async (top) => {
+        const beforeSignature = resultSignature(this.collectListItems(collectionRoot));
+        container.scrollTop = top;
+        if (typeof Event === "function") {
+          container.dispatchEvent?.(new Event("scroll", { bubbles: true }));
+        }
+        const deadline = Date.now() + 420;
+        let changed = false;
+        let stableSignature = beforeSignature;
+        let stableSamples = 0;
+        while (Date.now() < deadline) {
+          await sleep(60);
+          ensureUnchanged();
+          const signature = resultSignature(this.collectListItems(collectionRoot));
+          if (signature !== beforeSignature) changed = true;
+          if (signature === stableSignature) stableSamples += 1;
+          else {
+            stableSignature = signature;
+            stableSamples = 0;
+          }
+          if (changed && stableSamples >= 1) break;
+        }
+      };
+
+      let reachedEnd = true;
+      try {
+        let top = 0;
+        let previousTop = -1;
+        for (let pass = 0; pass < 400 && collected.size < maxItems; pass += 1) {
+          await moveTo(top);
+          collectVisible();
+          const end = Math.max(0, container.scrollHeight - container.clientHeight);
+          if (top >= end || top === previousTop) {
+            reachedEnd = true;
+            break;
+          }
+          reachedEnd = false;
+          previousTop = top;
+          const step = Math.max(40, Math.floor(container.clientHeight * 0.75));
+          top = Math.min(end, top + step);
+        }
+      } finally {
+        await moveTo(originalScrollTop);
+      }
+
+      ensureUnchanged();
+      return summarize([...collected.values()], reachedEnd);
+    },
+
+    _ensureResultsObserver() {
+      const list = document.querySelector(
+        ".x-page-search-results__list.x-list, .x-page-search-results__list"
+      );
+      if (!list || this._resultsObservedList === list) return;
+      this._resultsObserver?.disconnect?.();
+      this._resultsObservedList = list;
+      this._resultsRevision = Number(this._resultsRevision || 0) + 1;
+      if (typeof MutationObserver !== "function") return;
+      this._resultsObserver = new MutationObserver(() => {
+        this._resultsRevision = Number(this._resultsRevision || 0) + 1;
+      });
+      this._resultsObserver.observe(list, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["href"],
+      });
+    },
+
+    isFullResultsPage() {
+      return (
+        /[?&]req=query\b/i.test(location.search) &&
+        Boolean(document.querySelector(".x-page-search-tree-item"))
+      );
+    },
+
+    fullResultsQuery() {
+      const value = document.querySelector(
+        ".x-page-search-title__value .x-ellipsis__content, " +
+          ".x-page-search-title__value"
+      );
+      return stripQuotedQuery(value?.innerText || value?.textContent);
+    },
+
+    currentResultCategory() {
+      const heading = document.querySelector(".x-page-search-results-header__name");
+      const label = normalizedText(heading?.innerText || heading?.textContent);
+      return { key: categoryKeyForLabel(label), label };
+    },
+
+    fullResultsState(expectedQuery = "", expectedCategory = "") {
+      this._ensureResultsObserver();
+      const items = this.collectListItems();
+      const loading = this._isResultsLoading();
+      const emptyResults = this._hasEmptyResultsMessage();
+      const query = normalizedText(expectedQuery);
+      const pageQuery = this.fullResultsQuery();
+      const category = this.currentResultCategory();
+      const counter = normalizedText(
+        document.querySelector(".x-page-search-results-header__counter")?.textContent
+      );
+      const totalMatch = counter.match(/:\s*(\d+)\s*\]/);
+      const total = totalMatch ? Number(totalMatch[1]) : null;
+      return {
+        fullResults: this.isFullResultsPage(),
+        queryMatches: Boolean(query) && pageQuery === query,
+        queryAuthoritative: Boolean(query) && pageQuery === query,
+        activeCategory: category.key,
+        activeCategoryLabel: category.label,
+        categoryMatches: !expectedCategory || category.key === expectedCategory,
+        loading,
+        emptyResults,
+        resultsReady: !loading && (items.length > 0 || emptyResults),
+        resultCount: items.length,
+        categoryTotal: total,
+        resultSignature: resultSignature(items),
+        resultsRevision: Number(this._resultsRevision || 0),
+        items,
+      };
+    },
+
+    triggerFullResults(options = {}) {
+      if (this.isFullResultsPage()) {
+        return { triggered: false, alreadyOpen: true };
+      }
+      const link = [...document.querySelectorAll(FULL_RESULTS_LINK_SELECTOR)].find(
+        (element) => element.getClientRects?.().length || element.offsetParent !== null
+      );
+      if (!link) {
+        throw adapterError(
+          "FULL_RESULTS_NOT_FOUND",
+          "Ссылка «Все результаты поиска» не найдена"
+        );
+      }
+      let fullResultsUrl;
+      try {
+        const target = new URL(link.href, location.href);
+        if (
+          target.protocol !== "https:" ||
+          !isConsultantHost(target.hostname) ||
+          target.origin !== location.origin ||
+          target.username ||
+          target.password ||
+          target.searchParams.get("req") !== "query"
+        ) {
+          throw new Error("invalid target");
+        }
+        fullResultsUrl = target.href;
+      } catch {
+        throw adapterError(
+          "FULL_RESULTS_INVALID_URL",
+          "Ссылка «Все результаты поиска» имеет неожиданный адрес"
+        );
+      }
+      if (options.activate === true) {
+        setTimeout(() => {
+          if (link.isConnected !== false) link.click();
+        }, 0);
+      }
+      return {
+        triggered: options.activate === true,
+        prepared: options.activate !== true,
+        opensNewTab: true,
+        fullResultsUrl,
+      };
+    },
+
+    _findTreeRow(labelPattern) {
+      return [...document.querySelectorAll(".x-page-search-tree-item")].find((row) =>
+        labelPattern.test(
+          normalizedText(
+            row.querySelector?.(".x-page-search-tree-item__name")?.textContent
+          )
+        )
+      );
+    },
+
+    async _expandTreeRow(labelPattern) {
+      const row = this._findTreeRow(labelPattern);
+      if (!row) return false;
+      const expanded = row.querySelector?.("[data-expanded='1']");
+      if (expanded) return true;
+      row.click();
+      await sleep(180);
+      return true;
+    },
+
+    async triggerJudicialCategory(categoryKey) {
+      const pattern = JUDICIAL_CATEGORY_PATTERNS[categoryKey];
+      if (!pattern) {
+        throw adapterError("UNSUPPORTED_INSTANCE", "Неизвестная судебная инстанция");
+      }
+      if (!this.isFullResultsPage()) {
+        throw adapterError(
+          "FULL_RESULTS_REQUIRED",
+          "Сначала откройте «Все результаты поиска»"
+        );
+      }
+      if (this.currentResultCategory().key === categoryKey) {
+        return { triggered: false, category: categoryKey };
+      }
+
+      await this._expandTreeRow(/^Судебная практика$/i);
+      if (categoryKey.startsWith("arbitration-")) {
+        await this._expandTreeRow(/^Арбитражные суды$/i);
+      }
+      const row = this._findTreeRow(pattern);
+      if (!row) {
+        throw adapterError(
+          "INSTANCE_NOT_FOUND",
+          `Категория «${categoryKey}» отсутствует в этой выдаче`
+        );
+      }
+      const before = this.fullResultsState();
+      setTimeout(() => {
+        if (row.isConnected !== false) row.click();
+      }, 0);
+      return {
+        triggered: true,
+        category: categoryKey,
+        beforeSignature: before.resultSignature,
+        beforeTotal: before.categoryTotal,
+        beforeRevision: before.resultsRevision,
+        beforeCategory: before.activeCategory,
+      };
+    },
+
     currentSearchQuery() {
+      if (this.isFullResultsPage()) return this.fullResultsQuery();
       const inputValue = normalizedText(this._findSearchInput()?.value);
       if (inputValue) return inputValue;
       return this._urlSearchQuery();
@@ -218,6 +634,13 @@
     },
 
     getSearchState(expectedQuery = "") {
+      if (this.isFullResultsPage()) {
+        const state = this.fullResultsState(expectedQuery);
+        return {
+          ...state,
+          activeScope: state.activeCategory ? "practice" : "all",
+        };
+      }
       const items = this.collectListItems();
       const loading = this._isResultsLoading();
       const emptyResults = this._hasEmptyResultsMessage();

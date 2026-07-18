@@ -66,7 +66,13 @@ function createJob() {
       query: "аренда",
       scope: "practice",
       items: [
-        { index: 4, title: "Первый", url: "https://online.consultant.ru/?req=doc&n=1" },
+        {
+          index: 4,
+          title: "Первый",
+          url: "https://online.consultant.ru/?req=doc&n=1",
+          instance: "arbitration-first",
+          instanceLabel: "Арбитражные суды первой инстанции",
+        },
         { index: 5, title: "Второй", url: "https://online.consultant.ru/?req=doc&n=2" },
       ],
     },
@@ -76,6 +82,8 @@ function createJob() {
 
 test("job progress counts processed, completed, and failed items consistently", () => {
   const job = createJob();
+  assert.equal(job.items[0].instance, "arbitration-first");
+  assert.equal(job.items[0].instanceLabel, "Арбитражные суды первой инстанции");
   assert.equal(consIsJobActive(job), true);
   assert.deepEqual(
     { ...consJobProgress(job), log: [] },
