@@ -57,6 +57,10 @@ test("online practice continues through all results and selected court instances
 test("export waits for the document pane and native controls", () => {
   assert.match(source, /await waitDocumentReady\(tab\.id, job\.format, job\.id\)/);
   assert.match(source, /ping\.capabilities\.wordSaveReady \|\| ping\.capabilities\.menuSaveReady/);
+  assert.match(
+    source,
+    /const ready = await waitDocumentReady[\s\S]{0,300}ready\?\.documentTitle[\s\S]{0,250}consSafeFilename/
+  );
 });
 
 test("download completion and native filename determination are explicit", () => {
@@ -68,6 +72,16 @@ test("download completion and native filename determination are explicit", () =>
   assert.match(source, /consMatchesNativeDownload/);
   assert.match(source, /consNativeDownloadDecision/);
   assert.match(source, /sourceUrl: url/);
+  assert.match(source, /NM_FILENAME_FALLBACK/);
+  assert.match(source, /DOWNLOAD_UNCONFIRMED/);
+  assert.match(
+    source,
+    /nativeDecision\?\.code === "NM_FILENAME_FALLBACK"[\s\S]{0,500}ensureExportRunner\(\);[\s\S]{0,80}return;/
+  );
+  assert.match(
+    source,
+    /if \(matches\.length > 1\)[\s\S]{0,300}error\.code = "NM_AMBIGUOUS"/
+  );
 });
 
 test("download diagnostics are closed, separate from reports, and exposed safely", () => {
@@ -80,6 +94,8 @@ test("download diagnostics are closed, separate from reports, and exposed safely
     source.indexOf("async function saveJobReport")
   );
   assert.doesNotMatch(reportBody, /downloadDiagnostics|nativeMatchCode/);
+  assert.match(reportBody, /schemaVersion: 2/);
+  assert.match(reportBody, /unconfirmed: progress\.unconfirmed/);
 });
 
 test("stop requests are checked before tab extraction and while saving the report", () => {
@@ -91,6 +107,26 @@ test("stop requests are checked before tab extraction and while saving the repor
     source,
     /draft\.stopRequested \|\|[\s\S]{0,80}draft\.status === "stopping"[\s\S]{0,800}updated\.stopRequested[\s\S]{0,80}updated\.status === "stopping"/
   );
+});
+
+test("local reset removes every extension setting and completed-job state", () => {
+  const resetBody = source.slice(
+    source.indexOf('case "CLEAR_LOCAL_DATA"'),
+    source.indexOf("default:", source.indexOf('case "CLEAR_LOCAL_DATA"'))
+  );
+  for (const key of [
+    "lastQuery",
+    "lastScope",
+    "lastFormat",
+    "downloadFolder",
+    "rememberQuery",
+    "maxItems",
+    "lastInstances",
+    "settingsSchemaVersion",
+  ]) {
+    assert.match(resetBody, new RegExp(`"${key}"`));
+  }
+  assert.match(resetBody, /chrome\.storage\.session\.remove\(\[JOB_STORAGE_KEY, PROGRESS_STORAGE_KEY\]\)/);
 });
 
 test("all export item URLs cross the shared allowlist boundary", () => {

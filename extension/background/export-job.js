@@ -5,7 +5,12 @@
       ? require("../shared/runtime.js")
       : globalThis;
   const ACTIVE_JOB_STATUSES = new Set(["running", "stopping"]);
-  const TERMINAL_ITEM_STATUSES = new Set(["completed", "failed", "stopped"]);
+  const TERMINAL_ITEM_STATUSES = new Set([
+    "completed",
+    "unconfirmed",
+    "failed",
+    "stopped",
+  ]);
   const DOWNLOAD_DIAGNOSTIC_CODES = new Set(
     diagnosticsApi.CONS_DOWNLOAD_DIAGNOSTIC_CODES
   );
@@ -31,7 +36,7 @@
       format: input.format,
       query: String(input.query || "").slice(0, 2000),
       scope: String(input.scope || "all"),
-      folder: String(input.folder || "ConsExport"),
+      folder: String(input.folder || CONS_DEFAULT_DOWNLOAD_FOLDER),
       status: "running",
       phase: "queued",
       nextIndex: 0,
@@ -136,6 +141,7 @@
         current: 0,
         total: 0,
         completed: 0,
+        unconfirmed: 0,
         failed: 0,
         status: "idle",
         lastError: null,
@@ -143,13 +149,15 @@
       };
     }
     const completed = job.items.filter((item) => item.status === "completed").length;
+    const unconfirmed = job.items.filter((item) => item.status === "unconfirmed").length;
     const failed = job.items.filter((item) => item.status === "failed").length;
     const stopped = job.items.filter((item) => item.status === "stopped").length;
     return {
       jobId: job.id,
-      current: completed + failed + stopped,
+      current: completed + unconfirmed + failed + stopped,
       total: job.items.length,
       completed,
+      unconfirmed,
       failed,
       stopped,
       status: job.status,

@@ -3,24 +3,71 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Cons Export</title>
+    <title>Cons Download</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <header class="header">
-      <div class="brand">Cons Export</div>
-      <div id="pageMeta" class="meta">Найдите практику и сохраните документы</div>
+      <div class="brand">Cons Download</div>
+      <div id="pageMeta" class="meta">Найдите практику и скачайте документы</div>
     </header>
 
     <section class="block search-block">
-      <label class="label" for="query">Какую практику найти?</label>
+      <div class="label-row">
+        <label class="label" for="query">Какую практику найти?</label>
+        <span class="info-control">
+          <button
+            class="info-button"
+            type="button"
+            aria-label="Как работают поиск и скачивание"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="searchInfo"
+            data-info-target="searchInfo"
+          >i</button>
+          <span
+            id="searchInfo"
+            class="info-popover"
+            role="dialog"
+            aria-label="Поиск и скачивание"
+            hidden
+          >
+            «Найти» собирает выбранные судебные инстанции без скачивания.
+            «Найти и скачать» выполняет тот же поиск и сразу запускает выгрузку.
+            Пример запроса: взыскание задолженности по аренде нежилого помещения.
+          </span>
+        </span>
+      </div>
       <textarea
         id="query"
         rows="3"
         maxlength="2000"
-        placeholder="Например: взыскание задолженности по аренде нежилого помещения арбитраж"
       ></textarea>
-      <label class="label scope-label" for="scope">Область</label>
+      <div class="label-row scope-label">
+        <label class="label" for="scope">Область</label>
+        <span class="info-control">
+          <button
+            class="info-button"
+            type="button"
+            aria-label="Что означает область поиска"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="scopeInfo"
+            data-info-target="scopeInfo"
+          >i</button>
+          <span
+            id="scopeInfo"
+            class="info-popover"
+            role="dialog"
+            aria-label="Область поиска"
+            hidden
+          >
+            «Судебная практика» ограничивает исходный поиск практикой. «Всё по
+            запросу» начинает с общей выдачи; отмеченные инстанции всё равно
+            собираются со страницы всех результатов.
+          </span>
+        </span>
+      </div>
       <select id="scope">
         <option value="practice">Судебная практика</option>
         <option value="all">Всё по запросу</option>
@@ -43,89 +90,240 @@
           <input type="checkbox" name="instance" value="arbitration-rulings" />
           <span>Определения арбитражных судов</span>
         </label>
-        <p class="hint instances-hint">
-          Можно выбрать несколько. Поиск перейдёт в «Все результаты поиска» и
-          объединит выбранные категории без дублей. В online-версии инстанции
-          применяются и к области «Всё по запросу».
-        </p>
       </fieldset>
       <div class="field-row">
-        <label class="compact-field" for="maxItems">
-          <span>Лимит документов</span>
-          <input id="maxItems" type="number" min="1" max="200" value="50" />
-        </label>
-        <label class="check-field" for="rememberQuery">
-          <input id="rememberQuery" type="checkbox" />
-          <span>Запоминать запрос</span>
-        </label>
+        <div class="compact-field">
+          <div class="compact-label-row">
+            <label for="maxItems">Лимит</label>
+            <span class="info-control">
+              <button
+                class="info-button"
+                type="button"
+                aria-label="О лимите документов"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                aria-controls="limitInfo"
+                data-info-target="limitInfo"
+              >i</button>
+              <span
+                id="limitInfo"
+                class="info-popover"
+                role="dialog"
+                aria-label="Лимит документов"
+                hidden
+              >
+                От 1 до 200 документов за одну задачу. 200 — защитный лимит
+                Cons Download для управляемой очереди и проверки результата.
+              </span>
+            </span>
+          </div>
+          <input
+            id="maxItems"
+            type="number"
+            min="1"
+            max="200"
+            value="50"
+          />
+        </div>
+        <div class="remember-field">
+          <label class="check-field" for="rememberQuery">
+            <input id="rememberQuery" type="checkbox" />
+            <span>Запомнить запрос</span>
+          </label>
+          <span class="info-control">
+            <button
+              class="info-button"
+              type="button"
+              aria-label="Как запоминается запрос"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="rememberInfo"
+              data-info-target="rememberInfo"
+            >i</button>
+            <span
+              id="rememberInfo"
+              class="info-popover"
+              role="dialog"
+              aria-label="Запоминание запроса"
+              hidden
+            >
+              Если включено, текст из поля поиска сохранится только в этом
+              профиле Chrome и появится при следующем открытии расширения.
+            </span>
+          </span>
+        </div>
       </div>
       <div class="search-actions">
-        <button id="btnFind" class="btn primary" type="button">Найти</button>
-        <button id="btnFindSave" class="btn accent" type="button">
-          Найти и сохранить
+        <button id="btnFind" class="btn secondary" type="button">Найти</button>
+        <button id="btnFindSave" class="btn primary" type="button">
+          Найти и скачать
         </button>
       </div>
     </section>
 
     <section class="block">
-      <label class="label" for="format">Формат сохранения</label>
+      <div class="label-row">
+        <label class="label" for="format">Формат сохранения</label>
+        <span class="info-control">
+          <button
+            class="info-button"
+            type="button"
+            aria-label="О форматах сохранения"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="formatInfo"
+            data-info-target="formatInfo"
+          >i</button>
+          <span
+            id="formatInfo"
+            class="info-popover"
+            role="dialog"
+            aria-label="Форматы сохранения"
+            hidden
+          >
+            DOCX, PDF и RTF используют окно сохранения документа на сайте.
+            TXT и HTML создаются расширением быстрее, но могут не сохранить
+            сложную вёрстку.
+          </span>
+        </span>
+      </div>
       <select id="format">
         <option value="docx" selected>DOCX — Word (по умолчанию)</option>
         <option value="pdf">PDF</option>
         <option value="rtf">RTF</option>
-        <option value="txt">Текст (.txt) — быстрее, без окон КП</option>
-        <option value="html">HTML (.html) — быстрее, без окон КП</option>
+        <option value="txt">TXT — текст</option>
+        <option value="html">HTML</option>
       </select>
-      <label class="label scope-label" for="downloadFolder">Папка внутри «Загрузки»</label>
+      <div class="label-row scope-label">
+        <label class="label" for="downloadFolder">
+          Подпапка для документов и отчёта
+        </label>
+        <span class="info-control">
+          <button
+            class="info-button"
+            type="button"
+            aria-label="Куда сохраняются документы и отчёт"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="folderInfo"
+            data-info-target="folderInfo"
+          >i</button>
+          <span
+            id="folderInfo"
+            class="info-popover"
+            role="dialog"
+            aria-label="Папка загрузки"
+            hidden
+          >
+            Расширение предлагает путь Загрузки/<span id="folderPreview">ConsDownload</span>/…
+            для документов и JSON-отчёта. Основную папку и запрос места задаёт
+            Chrome. JSON — текстовый файл, его можно открыть в Блокноте.
+            <button id="btnOpenDownloadsSettings" class="linkish" type="button">
+              Настройки загрузок Chrome
+            </button>
+          </span>
+        </span>
+      </div>
       <input
         id="downloadFolder"
         type="text"
-        value="ConsExport"
-        placeholder="ConsExport"
+        value="ConsDownload"
       />
-      <p class="hint folder-hint" id="folderHint">
-        Файлы и JSON-отчёт: Загрузки/<span id="folderPreview">ConsExport</span>/…
-        Без окон — один раз выключите в Chrome «Всегда указывать место для скачивания».
-        <button id="btnOpenDownloadsSettings" class="linkish" type="button">
-          Открыть настройки загрузок
-        </button>
-      </p>
     </section>
 
-    <section class="block stats" id="stats">
-      <div>Адаптер: <strong id="adapterName">—</strong></div>
-      <div>Страница: <strong id="pageType">—</strong></div>
-      <div>В списке: <strong id="listCount">—</strong></div>
-    </section>
-
-    <section class="actions">
-      <button id="btnScan" class="btn secondary" type="button">Собрать открытую категорию</button>
+    <section class="actions" id="contextActions" hidden>
       <button id="btnExport" class="btn secondary" type="button" disabled>
-        Выгрузить открытую категорию
+        Скачать результаты
       </button>
       <button id="btnOne" class="btn secondary" type="button">
-        Сохранить текущий
+        Скачать открытый документ
       </button>
       <button id="btnStop" class="btn danger" type="button" hidden>Стоп</button>
     </section>
 
     <section class="block">
-      <div class="label">Прогресс</div>
+      <div class="label-row">
+        <div class="label">Прогресс</div>
+        <span id="progressInfoControl" class="info-control" hidden>
+          <button
+            class="info-button"
+            type="button"
+            aria-label="Пояснение статуса"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="progressInfo"
+            data-info-target="progressInfo"
+          >i</button>
+          <span
+            id="progressInfo"
+            class="info-popover"
+            role="dialog"
+            aria-label="Пояснение статуса"
+            hidden
+          ></span>
+        </span>
+      </div>
       <div id="progressText" class="progress" role="status" aria-live="polite">ожидание</div>
       <pre id="log" class="log"></pre>
     </section>
 
     <details class="block online-tools">
-      <summary>Диагностика и приватность</summary>
-      <p class="hint diagnostics-hint">
-        Диагностика копирует обезличенное состояние интерфейса. Сохранённый запрос можно
-        удалить вместе с локальными настройками.
-      </p>
+      <summary>Помощь при ошибке</summary>
       <div class="diagnostic-actions">
-        <button id="btnProbe" class="btn secondary" type="button">Разведка UI</button>
-        <button id="btnClearData" class="btn secondary" type="button">
-          Очистить локальные данные
-        </button>
+        <div class="support-action">
+          <button id="btnProbe" class="btn secondary" type="button">
+            Скопировать диагностику
+          </button>
+          <span class="info-control">
+            <button
+              class="info-button"
+              type="button"
+              aria-label="Какие данные копирует диагностика"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="diagnosticsInfo"
+              data-info-target="diagnosticsInfo"
+            >i</button>
+            <span
+              id="diagnosticsInfo"
+              class="info-popover"
+              role="dialog"
+              aria-label="Диагностика"
+              hidden
+            >
+              Копирует версию <span id="extensionVersion">—</span> и обезличенные
+              технические данные для сообщения разработчику. Запрос, URL и
+              документы не копируются.
+            </span>
+          </span>
+        </div>
+        <div class="support-action">
+          <button id="btnClearData" class="btn secondary" type="button">
+            Сбросить настройки и историю
+          </button>
+          <span class="info-control">
+            <button
+              class="info-button"
+              type="button"
+              aria-label="Что удаляет сброс"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="resetInfo"
+              data-info-target="resetInfo"
+            >i</button>
+            <span
+              id="resetInfo"
+              class="info-popover"
+              role="dialog"
+              aria-label="Сброс настроек"
+              hidden
+            >
+              Возвращает область, формат, подпапку, лимит и инстанции по
+              умолчанию; удаляет запомненный запрос и историю задачи. Скачанные
+              файлы, настройки Chrome и вход не изменяются.
+            </span>
+          </span>
+        </div>
       </div>
     </details>
 

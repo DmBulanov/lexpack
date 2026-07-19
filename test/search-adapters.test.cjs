@@ -436,6 +436,43 @@ test("online search state does not report a different or missing query as ready"
   assert.equal(settledState.items[0].title, "Same result");
 });
 
+test("online list uses the document heading before the matching fragment", () => {
+  const location = makeLocation(
+    "https://online.consultant.ru/riv/cgi/online.cgi?req=query"
+  );
+  const heading = {
+    innerText: "Путеводитель по судебной практике: Общие положения об аренде.",
+  };
+  const fragment = {
+    innerText: "Можно ли взыскать с арендодателя платежи по договору аренды",
+  };
+  const link = {
+    href: "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=PSP&n=1765",
+    innerText: `${heading.innerText} ${fragment.innerText}`,
+    querySelector(selector) {
+      if (selector === ".T") return heading;
+      if (selector === ".TH") return fragment;
+      return null;
+    },
+  };
+  const document = baseDocument({
+    body: { innerText: "Search results", click() {} },
+    querySelector() {
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector.includes("search-result-item__extra") ? [link] : [];
+    },
+  });
+  const { adapter } = loadAdapter(onlineAdapterSource, "onlineApp", {
+    location,
+    document,
+  });
+
+  const [item] = adapter.collectListItems();
+  assert.equal(item.title, heading.innerText);
+});
+
 test("online state is atomic and scope clicks are deferred until after the response", () => {
   const location = makeLocation(
     "https://online.consultant.ru/riv/cgi/online.cgi?req=card&page=splus&splusFind=" +
@@ -729,6 +766,28 @@ test("content router exposes AUTH_REQUIRED and rejects unsupported scopes before
 
   assert.equal(scope.code, "UNSUPPORTED_SCOPE");
   assert.equal(searchCalls, 0);
+});
+
+test("content router returns the actual title only for a ready document", async () => {
+  const request = loadRouter(
+    {
+      onlineApp: {
+        id: "online-app",
+        matches: () => true,
+        detectPage: () => "document",
+        getCapabilities: () => ({ documentReady: true }),
+        getDocumentTitle: () =>
+          "Путеводитель по судебной практике: Общие положения об аренде",
+      },
+    },
+    "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=PSP&n=1765"
+  );
+
+  const ping = await request({ type: "PING" });
+  assert.equal(
+    ping.documentTitle,
+    "Путеводитель по судебной практике: Общие положения об аренде"
+  );
 });
 
 test("content router exposes atomic search state and returns before a deferred scope click", async () => {

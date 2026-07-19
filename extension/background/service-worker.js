@@ -16,6 +16,7 @@ const DIRECT_DOWNLOAD_TIMEOUT_MS = 90000;
 const NATIVE_DOWNLOAD_START_TIMEOUT_MS = 35000;
 const NATIVE_DOWNLOAD_TIMEOUT_MS = 60000;
 const POLL_MS = 400;
+const DOWNLOAD_UNCONFIRMED_CODE = "DOWNLOAD_UNCONFIRMED";
 const CONTENT_SCRIPT_FILES = [
   "shared/filename.js",
   "shared/runtime.js",
@@ -32,12 +33,13 @@ let searchFlowInProgress = false;
 const contentInjectionByTab = new Map();
 const NATIVE_DIAGNOSTIC_RANK = Object.freeze({
   NM_REFERRER: 1,
-  NM_URL: 2,
-  NM_DOCUMENT: 3,
-  NM_BASE: 4,
-  NM_ID_MISSING: 5,
-  NM_ID_MISMATCH: 6,
-  NM_OWNER: 7,
+  NM_FILENAME: 2,
+  NM_URL: 3,
+  NM_DOCUMENT: 4,
+  NM_BASE: 5,
+  NM_ID_MISSING: 6,
+  NM_ID_MISMATCH: 7,
+  NM_OWNER: 8,
 });
 
 function delay(ms) {
@@ -46,6 +48,16 @@ function delay(ms) {
 
 function errorText(error) {
   return String(error?.message || error || "Неизвестная ошибка");
+}
+
+function unconfirmedDownloadError(message) {
+  const error = new Error(message);
+  error.code = DOWNLOAD_UNCONFIRMED_CODE;
+  return error;
+}
+
+function isUnconfirmedDownloadError(error) {
+  return [DOWNLOAD_UNCONFIRMED_CODE, "NM_AMBIGUOUS"].includes(error?.code);
 }
 
 async function readJob() {
@@ -103,8 +115,18 @@ async function rememberNativeMatchDecision(jobId, decision) {
 }
 
 async function getDownloadFolder() {
-  const { downloadFolder } = await chrome.storage.local.get("downloadFolder");
-  return consSanitizeFolder(downloadFolder || "ConsExport");
+  const { downloadFolder, settingsSchemaVersion } = await chrome.storage.local.get([
+    "downloadFolder",
+    "settingsSchemaVersion",
+  ]);
+  const folder = consMigrateStoredDownloadFolder(downloadFolder, settingsSchemaVersion);
+  if (Number(settingsSchemaVersion || 0) < CONS_SETTINGS_SCHEMA_VERSION) {
+    await chrome.storage.local.set({
+      downloadFolder: folder,
+      settingsSchemaVersion: CONS_SETTINGS_SCHEMA_VERSION,
+    });
+  }
+  return folder;
 }
 
 async function setResumeAlarm(active) {
@@ -330,6 +352,18 @@ async function attachCreatedDownload(downloadItem) {
     await rememberNativeMatchDecision(job.id, nativeDecision);
     return;
   }
+  if (nativeDecision?.code === "NM_FILENAME_FALLBACK") {
+    await mutateJob((draft) => {
+      if (draft.id === job.id && draft.current?.downloadId == null) {
+        consAppendDownloadDiagnostic(draft, "NM_FILENAME_FALLBACK");
+      }
+      return draft;
+    });
+    // The polling recovery path checks that exactly one recent fallback
+    // candidate exists before it assigns the download to the current item.
+    ensureExportRunner();
+    return;
+  }
 
   const updated = await mutateJob((draft) => {
     if (
@@ -425,7 +459,9 @@ async function waitForCurrentDownloadId(jobId, timeoutMs) {
       timedOutJob.current.nativeMatchCode || "NM_TIMEOUT"
     );
   }
-  throw new Error("Загрузка не началась за отведённое время");
+  throw unconfirmedDownloadError(
+    "Расширение не подтвердило начало загрузки за отведённое время; файл мог сохраниться в «Загрузки»"
+  );
 }
 
 async function waitForDownloadCompletion(jobId, downloadId, timeoutMs, allowStop = true) {
@@ -445,7 +481,9 @@ async function waitForDownloadCompletion(jobId, downloadId, timeoutMs, allowStop
     }
     await delay(POLL_MS);
   }
-  throw new Error("Превышено время ожидания завершения загрузки");
+  throw unconfirmedDownloadError(
+    "Расширение не подтвердило завершение загрузки за отведённое время; проверьте «Загрузки» Chrome"
+  );
 }
 
 async function assertJobCanContinue(jobId) {
@@ -656,14 +694,21 @@ async function processExportItem(job, itemIndex) {
   const url = consNormalizeDocumentUrl(item.url, job.adapter);
   const capabilities = consGetAdapterCapabilities(job.adapter);
   const isNative = capabilities.nativeFormats.includes(job.format);
-  const expectedFilename = consSafeFilename(item.title, itemIndex + 1, job.format);
+  let expectedFilename = consSafeFilename(item.title, itemIndex + 1, job.format);
 
   const tab = await chrome.tabs.create({ url, active: false });
   await updateCurrent(job.id, { tabId: tab.id }, "loading_tab");
 
   try {
     await waitTabComplete(tab.id, TAB_TIMEOUT_MS, null, job.id);
-    await waitDocumentReady(tab.id, job.format, job.id);
+    const ready = await waitDocumentReady(tab.id, job.format, job.id);
+    if (ready?.documentTitle) {
+      expectedFilename = consSafeFilename(
+        ready.documentTitle,
+        itemIndex + 1,
+        job.format
+      );
+    }
     await assertJobCanContinue(job.id);
 
     if (isNative) {
@@ -748,14 +793,14 @@ function reportFilename(job) {
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z")
     .replace("T", "-");
-  return `ConsExport-report-${stamp}.json`;
+  return `ConsDownload-report-${stamp}.json`;
 }
 
 function serializeJobReport(job) {
   const progress = consJobProgress(job);
   return JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       jobId: job.id,
       query: job.query,
       scope: job.scope,
@@ -764,10 +809,15 @@ function serializeJobReport(job) {
       startedAt: job.startedAt,
       generatedAt: new Date().toISOString(),
       summary: {
-        status: progress.failed ? "completed_with_errors" : "completed",
+        status: progress.failed
+          ? "completed_with_errors"
+          : progress.unconfirmed
+            ? "completed_with_unconfirmed"
+            : "completed",
         total: progress.total,
         processed: progress.current,
         completed: progress.completed,
+        unconfirmed: progress.unconfirmed,
         failed: progress.failed,
         stopped: progress.stopped,
       },
@@ -946,7 +996,13 @@ async function runStoredJob() {
       }
       await mutateJob((draft) => {
         const progress = consJobProgress(draft);
-        consAppendJobLog(draft, `Готово: ${progress.completed}/${progress.total}`);
+        const unconfirmed = progress.unconfirmed
+          ? `; требует проверки: ${progress.unconfirmed}`
+          : "";
+        consAppendJobLog(
+          draft,
+          `Готово: ${progress.completed}/${progress.total}${unconfirmed}`
+        );
         return consFinishJob(draft, "done");
       });
       await clearResumeAlarmBestEffort();
@@ -970,8 +1026,10 @@ async function runStoredJob() {
       }
       await cleanupResources(latest);
       await mutateJob((draft) => {
-        consMarkItemFinished(draft, itemIndex, "failed", { error: errorText(error) });
-        consAppendJobLog(draft, `ERR [${itemIndex + 1}] ${errorText(error)}`);
+        const status = isUnconfirmedDownloadError(error) ? "unconfirmed" : "failed";
+        consMarkItemFinished(draft, itemIndex, status, { error: errorText(error) });
+        const prefix = status === "unconfirmed" ? "ПРОВЕРИТЬ" : "ERR";
+        consAppendJobLog(draft, `${prefix} [${itemIndex + 1}] ${errorText(error)}`);
         return draft;
       });
     }
@@ -1714,6 +1772,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "rememberQuery",
           "maxItems",
           "lastInstances",
+          "settingsSchemaVersion",
         ]);
         await chrome.storage.session.remove([JOB_STORAGE_KEY, PROGRESS_STORAGE_KEY]);
         return { ok: true };

@@ -1,6 +1,6 @@
-# Cons Export
+# Cons Download
 
-Chrome extension / Cons Export project files.
+Chrome extension / Cons Download project files.
 
 # OS
 .DS_Store
@@ -25,4 +25,5 @@ dist/
 
 # Personal downloads accidentally copied here
 ConsExport/
+ConsDownload/
 export_*.csv

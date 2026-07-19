@@ -49,6 +49,10 @@
             page,
             capabilities,
             authRequired: page === "auth-required",
+            documentTitle:
+              capabilities.documentReady && typeof adapter.getDocumentTitle === "function"
+                ? adapter.getDocumentTitle()
+                : "",
             url: location.href,
             title: document.title,
           };

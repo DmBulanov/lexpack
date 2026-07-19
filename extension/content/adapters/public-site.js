@@ -163,10 +163,7 @@
         await new Promise((r) => setTimeout(r, 800));
       }
 
-      const title =
-        document.querySelector("h1")?.innerText?.trim() ||
-        document.querySelector(".document-page__title")?.innerText?.trim() ||
-        document.title.replace(/\s*\\?\s*КонсультантПлюс.*$/i, "").trim();
+      const title = this.getDocumentTitle();
 
       const root =
         document.querySelector(".document-page__main") ||
@@ -188,6 +185,14 @@
       )}</title></head><body>${clone.innerHTML}</body></html>`;
 
       return { title, text, html, url: location.href };
+    },
+
+    getDocumentTitle() {
+      return (
+        document.querySelector("h1")?.innerText?.trim() ||
+        document.querySelector(".document-page__title")?.innerText?.trim() ||
+        document.title.replace(/\s*\\?\s*КонсультантПлюс.*$/i, "").trim()
+      );
     },
 
     probe() {

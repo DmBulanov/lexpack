@@ -1,6 +1,6 @@
 {
-  "name": "cons-export",
-  "version": "0.6.0",
+  "name": "cons-download",
+  "version": "0.7.1",
   "private": true,
   "description": "Zero-build Chrome extension for exporting ConsultantPlus documents.",
   "license": "UNLICENSED",
@@ -17,6 +17,6 @@
     "test:browser": "node --test --test-concurrency=1 test/browser/*.test.cjs",
     "test": "npm run test:unit && npm run test:browser",
     "check": "npm run check:syntax && npm run check:manifest && npm test",
-    "package": "mkdir -p dist && cd extension && zip -q -r -FS ../dist/cons-export.zip . -x '*.DS_Store' && unzip -tq ../dist/cons-export.zip"
+    "package": "mkdir -p dist && cd extension && zip -q -r -FS ../dist/cons-download.zip . -x '*.DS_Store' && unzip -tq ../dist/cons-download.zip"
   }
 }

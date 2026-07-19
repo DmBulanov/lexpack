@@ -227,7 +227,9 @@
         if (!/[?&]req=doc\b/i.test(href)) return;
         seen.add(identity);
         const title = normalizedText(
-          a.querySelector?.(".TH")?.innerText ||
+          a.querySelector?.(".T")?.innerText ||
+            a.querySelector?.(".T")?.textContent ||
+            a.querySelector?.(".TH")?.innerText ||
             a.querySelector?.(".TH")?.textContent ||
             a.innerText ||
             a.textContent
@@ -782,6 +784,10 @@
           ?.trim() ||
         "document"
       );
+    },
+
+    getDocumentTitle() {
+      return this._docTitle();
     },
 
     _docRoot() {

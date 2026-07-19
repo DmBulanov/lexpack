@@ -6,12 +6,14 @@ const {
   consBuildOnlineSearchUrl,
   consBuildPublicSearchUrl,
   consBuildSafeDiagnosticsSnapshot,
+  consIsConsultantDownloadUrl,
   consIsConsultantHost,
   consIsConsultantPageUrl,
   consMatchesNativeDownload,
   consNativeDownloadDecision,
   consNormalizeDocumentUrl,
   consNormalizeJudicialInstances,
+  consMigrateStoredDownloadFolder,
   consProvenanceUrl,
   consRedactUrl,
   consSanitizeFolder,
@@ -107,6 +109,18 @@ test("Consultant host checks enforce an HTTPS hostname boundary", () => {
   assert.equal(consIsConsultantHost("consultant.ru.evil.example"), false);
   assert.equal(consIsConsultantPageUrl("https://online.consultant.ru/path"), true);
   assert.equal(consIsConsultantPageUrl("http://online.consultant.ru/path"), false);
+  assert.equal(
+    consIsConsultantDownloadUrl("blob:https://online.consultant.ru/download-id"),
+    true
+  );
+  assert.equal(
+    consIsConsultantDownloadUrl("blob:https://evil.example/download-id"),
+    false
+  );
+  assert.equal(
+    consIsConsultantDownloadUrl("blob:http://online.consultant.ru/download-id"),
+    false
+  );
 });
 
 test("document URLs are constrained by adapter and reject credentials", () => {
@@ -150,7 +164,9 @@ test("format capabilities reject silent public-site fallback", () => {
 test("folder sanitization removes traversal, reserved names, and invalid characters", () => {
   assert.equal(consSanitizeFolder("../Практика/2026"), "Практика/2026");
   assert.equal(consSanitizeFolder("CON/дело:*"), "_CON/дело__");
-  assert.equal(consSanitizeFolder("../../"), "ConsExport");
+  assert.equal(consSanitizeFolder("../../"), "ConsDownload");
+  assert.equal(consMigrateStoredDownloadFolder("ConsExport", 0), "ConsDownload");
+  assert.equal(consMigrateStoredDownloadFolder("ConsExport", 1), "ConsExport");
 });
 
 test("report URLs redact session-bearing parameters and fragments", () => {
@@ -177,7 +193,7 @@ test("native download matching rejects unrelated time, format, host, and documen
   const candidate = {
     startTime: "2026-07-18T10:00:01.000Z",
     filename: "/Downloads/document.pdf",
-    url: "https://online.consultant.ru/download/file",
+    url: "blob:https://online.consultant.ru/download-id",
     referrer: "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=LAW&n=42",
   };
 
@@ -232,7 +248,11 @@ test("native download matching rejects unrelated time, format, host, and documen
     false
   );
   assert.equal(
-    consMatchesNativeDownload({ ...candidate, startTime: "2026-07-18T10:00:31.000Z" }, current),
+    consMatchesNativeDownload({ ...candidate, startTime: "2026-07-18T10:00:35.000Z" }, current),
+    true
+  );
+  assert.equal(
+    consMatchesNativeDownload({ ...candidate, startTime: "2026-07-18T10:00:36.000Z" }, current),
     false
   );
   assert.equal(
@@ -260,7 +280,7 @@ test("native download matching rejects unrelated time, format, host, and documen
   });
   assert.deepEqual(
     consNativeDownloadDecision({ ...candidate, referrer: "" }, current),
-    { match: false, candidate: true, code: "NM_REFERRER" }
+    { match: false, candidate: true, code: "NM_FILENAME" }
   );
   assert.deepEqual(
     consNativeDownloadDecision(
@@ -281,11 +301,118 @@ test("native download matching rejects unrelated time, format, host, and documen
   );
 });
 
+test("native matcher safely recovers ConsultantPlus downloads without referrer", () => {
+  const title =
+    "Постановление Арбитражного суда Московского округа от 14.02.2025 N Ф05-30158/2024 по делу N А40-196423/2023";
+  const safeTitle = title.replaceAll("/", " ");
+  const current = {
+    downloadKind: "native",
+    downloadStartedAt: Date.parse("2026-07-18T10:00:00.000Z"),
+    expectedFilename: `01 - ${safeTitle}.docx`,
+    sourceUrl:
+      "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=ASMS&n=123",
+    extensionId: "cons-export-extension",
+  };
+  const candidate = {
+    startTime: "2026-07-18T10:00:01.000Z",
+    filename:
+      "/Downloads/Постановление Арбитражного суда Московского округа от 14.02..docx",
+    url: "blob:https://online.consultant.ru/download-id",
+    referrer: "",
+  };
+
+  assert.deepEqual(consNativeDownloadDecision(candidate, current), {
+    match: true,
+    candidate: true,
+    code: "NM_FILENAME_FALLBACK",
+  });
+  assert.equal(consMatchesNativeDownload(candidate, current), true);
+  assert.equal(
+    consMatchesNativeDownload(
+      { ...candidate, filename: "/Downloads/Другое решение арбитражного суда.docx" },
+      current
+    ),
+    false
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      { ...candidate, byExtensionId: "other-extension" },
+      current
+    ),
+    false
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      candidate,
+      { ...current, sourceUrl: "https://evil.example/?req=doc" }
+    ),
+    false
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      { ...candidate, url: "blob:https://evil.example/download-id" },
+      current
+    ),
+    false
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      { ...candidate, url: "blob:https://www.consultant.ru/download-id" },
+      current
+    ),
+    false
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      { ...candidate, startTime: "2026-07-18T09:59:59.000Z" },
+      current
+    ),
+    false
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      {
+        ...candidate,
+        filename:
+          "/Downloads/Постановление Арбитражного суда Московского округа без даты.docx",
+      },
+      current
+    ),
+    false
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      {
+        ...candidate,
+        filename:
+          "/Downloads/Путеводитель по судебной практике_ Общие положения об аренде.docx",
+      },
+      {
+        ...current,
+        expectedFilename:
+          "01 - Путеводитель по судебной практике_ Общие положения об аренде.docx",
+      }
+    ),
+    true
+  );
+  assert.equal(
+    consMatchesNativeDownload(
+      { ...candidate, filename: "/Downloads/Список документов.docx" },
+      {
+        ...current,
+        expectedFilename:
+          "01 - Путеводитель по судебной практике_ Общие положения об аренде.docx",
+      }
+    ),
+    false
+  );
+});
+
 test("native matcher exposes a closed reason table and preserves boolean parity", () => {
   const current = {
     downloadKind: "native",
     downloadStartedAt: Date.parse("2026-07-18T10:00:00.000Z"),
-    expectedFilename: "SECRET_TITLE.pdf",
+    expectedFilename: "SECRET_TITLE_14_02_2025_FOR_JUDICIAL_ACT.pdf",
     sourceUrl:
       "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=LAW&n=42&token=SECRET_URL",
     extensionId: "our-extension",
@@ -307,7 +434,25 @@ test("native matcher exposes a closed reason table and preserves boolean parity"
       current,
     ],
     ["NM_EXTENSION", { ...candidate, filename: "/Downloads/document.txt" }, current],
-    ["NM_REFERRER", { ...candidate, referrer: "" }, current],
+    [
+      "NM_FILENAME",
+      {
+        ...candidate,
+        url: "blob:https://online.consultant.ru/download-id",
+        referrer: "",
+      },
+      current,
+    ],
+    [
+      "NM_FILENAME_FALLBACK",
+      {
+        ...candidate,
+        filename: "/SECRET_PATH/SECRET_TITLE_14_02_2025_FOR_JUDICIAL_ACT.pdf",
+        url: "blob:https://online.consultant.ru/download-id",
+        referrer: "",
+      },
+      current,
+    ],
     ["NM_URL", candidate, { ...current, sourceUrl: "" }],
     [
       "NM_DOCUMENT",

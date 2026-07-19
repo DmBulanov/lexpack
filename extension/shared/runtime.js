@@ -1,11 +1,16 @@
 /** Shared runtime contracts for popup, content scripts, and the service worker. */
 (function () {
+  const NATIVE_DOWNLOAD_MATCH_WINDOW_MS = 35000;
+  const CONS_DEFAULT_DOWNLOAD_FOLDER = "ConsDownload";
+  const CONS_SETTINGS_SCHEMA_VERSION = 1;
   const CONS_DOWNLOAD_DIAGNOSTIC_CODES = Object.freeze([
     "NM_CONTEXT",
     "NM_TIME",
     "NM_ORIGIN",
     "NM_EXTENSION",
     "NM_REFERRER",
+    "NM_FILENAME",
+    "NM_FILENAME_FALLBACK",
     "NM_URL",
     "NM_DOCUMENT",
     "NM_BASE",
@@ -75,6 +80,22 @@
     try {
       const url = new URL(rawUrl);
       return url.protocol === "https:" && consIsConsultantHost(url.hostname);
+    } catch {
+      return false;
+    }
+  }
+
+  function consIsConsultantDownloadUrl(rawUrl) {
+    try {
+      const url = new URL(rawUrl);
+      if (url.protocol === "https:") {
+        return consIsConsultantHost(url.hostname);
+      }
+      if (url.protocol === "blob:") {
+        const origin = new URL(url.origin);
+        return origin.protocol === "https:" && consIsConsultantHost(origin.hostname);
+      }
+      return false;
     } catch {
       return false;
     }
@@ -197,14 +218,21 @@
   }
 
   function consSanitizeFolder(rawFolder) {
-    const segments = String(rawFolder || "ConsExport")
+    const segments = String(rawFolder || CONS_DEFAULT_DOWNLOAD_FOLDER)
       .replace(/\\/g, "/")
       .split("/")
       .filter((segment) => segment && segment !== "." && segment !== "..")
       .map(consSanitizePathSegment)
       .filter(Boolean)
       .slice(0, 5);
-    return segments.join("/") || "ConsExport";
+    return segments.join("/") || CONS_DEFAULT_DOWNLOAD_FOLDER;
+  }
+
+  function consMigrateStoredDownloadFolder(rawFolder, schemaVersion = 0) {
+    const folder = consSanitizeFolder(rawFolder);
+    return Number(schemaVersion || 0) < CONS_SETTINGS_SCHEMA_VERSION && folder === "ConsExport"
+      ? CONS_DEFAULT_DOWNLOAD_FOLDER
+      : folder;
   }
 
   function consProvenanceUrl(rawUrl) {
@@ -234,6 +262,53 @@
     return { match, candidate, code };
   }
 
+  function nativeFilenameStem(rawFilename) {
+    const basename = String(rawFilename || "")
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean)
+      .pop() || "";
+    return basename
+      .normalize("NFKC")
+      .replace(/\.[a-z0-9]{1,8}$/i, "")
+      .replace(/\s*\(\d+\)$/u, "")
+      .replace(/^\d{1,4}\s*[-–—]\s*/u, "")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  }
+
+  function consNativeFilenameMatches(actualFilename, expectedFilename) {
+    const actual = nativeFilenameStem(actualFilename);
+    const expected = nativeFilenameStem(expectedFilename);
+    if (!actual || !expected) return false;
+    const tokens = actual.split(" ");
+    const numericTokens = tokens.filter((token) => /^\d+$/u.test(token));
+    const descriptiveTokens = tokens.filter(
+      (token) => /^\p{L}[\p{L}\p{N}]{2,}$/u.test(token)
+    );
+    if (
+      actual.length < 40 ||
+      (numericTokens.length < 2 && descriptiveTokens.length < 6)
+    ) {
+      return false;
+    }
+
+    // ConsultantPlus can shorten its proposed filename. Accept only that
+    // direction: the whole actual stem must be an exact prefix of the title
+    // confirmed on the opened document page.
+    return expected.startsWith(actual);
+  }
+
+  function consBlobDownloadMatchesSource(rawUrl, source) {
+    try {
+      const url = new URL(rawUrl);
+      return url.protocol === "blob:" && url.origin === source.origin;
+    } catch {
+      return false;
+    }
+  }
+
   function consNativeDownloadDecision(item, current) {
     if (!item || current?.downloadKind !== "native") {
       return nativeDecision(false, false, "NM_CONTEXT");
@@ -245,20 +320,14 @@
       !Number.isFinite(startedAt) ||
       !Number.isFinite(triggerAt) ||
       startedAt < triggerAt - 2000 ||
-      startedAt > triggerAt + 30000
+      startedAt > triggerAt + NATIVE_DOWNLOAD_MATCH_WINDOW_MS
     ) {
       return nativeDecision(false, false, "NM_TIME");
     }
 
-    const consultantOrigin = [item.url, item.finalUrl, item.referrer].some((candidate) => {
-      if (!candidate) return false;
-      try {
-        const url = new URL(candidate);
-        return url.protocol === "https:" && consIsConsultantHost(url.hostname);
-      } catch {
-        return false;
-      }
-    });
+    const consultantOrigin = [item.url, item.finalUrl, item.referrer].some(
+      consIsConsultantDownloadUrl
+    );
     if (!consultantOrigin) return nativeDecision(false, false, "NM_ORIGIN");
 
     const expectedExtension = String(current.expectedFilename || "")
@@ -271,16 +340,48 @@
       return nativeDecision(false, false, "NM_EXTENSION");
     }
 
-    if (!item.referrer) return nativeDecision(false, true, "NM_REFERRER");
+    if (
+      current.extensionId &&
+      item.byExtensionId &&
+      item.byExtensionId !== current.extensionId
+    ) {
+      return nativeDecision(false, true, "NM_OWNER");
+    }
+
     if (!current.sourceUrl) return nativeDecision(false, true, "NM_URL");
+    let source;
+    try {
+      source = new URL(current.sourceUrl);
+      if (
+        source.protocol !== "https:" ||
+        !consIsConsultantHost(source.hostname)
+      ) {
+        return nativeDecision(false, true, "NM_URL");
+      }
+      const sourceIsDocument =
+        source.searchParams.get("req")?.toLowerCase() === "doc" ||
+        source.pathname.startsWith("/document/");
+      if (!sourceIsDocument) {
+        return nativeDecision(false, true, "NM_DOCUMENT");
+      }
+    } catch {
+      return nativeDecision(false, true, "NM_URL");
+    }
+    if (!item.referrer) {
+      if (startedAt < triggerAt) return nativeDecision(false, false, "NM_TIME");
+      const sourceBlob = [item.url, item.finalUrl].some((candidate) =>
+        consBlobDownloadMatchesSource(candidate, source)
+      );
+      if (!sourceBlob) return nativeDecision(false, true, "NM_ORIGIN");
+      return consNativeFilenameMatches(item.filename, current.expectedFilename)
+        ? nativeDecision(true, true, "NM_FILENAME_FALLBACK")
+        : nativeDecision(false, true, "NM_FILENAME");
+    }
     try {
       const referrer = new URL(item.referrer);
-      const source = new URL(current.sourceUrl);
       if (
         referrer.protocol !== "https:" ||
-        source.protocol !== "https:" ||
-        !consIsConsultantHost(referrer.hostname) ||
-        !consIsConsultantHost(source.hostname)
+        !consIsConsultantHost(referrer.hostname)
       ) {
         return nativeDecision(false, true, "NM_URL");
       }
@@ -288,10 +389,7 @@
       const referrerIsDocument =
         referrer.searchParams.get("req")?.toLowerCase() === "doc" ||
         referrer.pathname.startsWith("/document/");
-      const sourceIsDocument =
-        source.searchParams.get("req")?.toLowerCase() === "doc" ||
-        source.pathname.startsWith("/document/");
-      if (!referrerIsDocument || !sourceIsDocument) {
+      if (!referrerIsDocument) {
         return nativeDecision(false, true, "NM_DOCUMENT");
       }
 
@@ -312,13 +410,6 @@
       }
       if (strongIdentifiers === 0) {
         return nativeDecision(false, true, "NM_ID_MISSING");
-      }
-      if (
-        current.extensionId &&
-        item.byExtensionId &&
-        item.byExtensionId !== current.extensionId
-      ) {
-        return nativeDecision(false, true, "NM_OWNER");
       }
     } catch {
       return nativeDecision(false, true, "NM_URL");
@@ -363,6 +454,8 @@
   }
 
   const api = {
+    CONS_DEFAULT_DOWNLOAD_FOLDER,
+    CONS_SETTINGS_SCHEMA_VERSION,
     CONS_DOWNLOAD_DIAGNOSTIC_CODES,
     CONS_ADAPTER_CAPABILITIES,
     CONS_FORMATS,
@@ -374,8 +467,10 @@
     consNormalizeJudicialInstances,
     consGetAdapterCapabilities,
     consIsConsultantHost,
+    consIsConsultantDownloadUrl,
     consIsConsultantPageUrl,
     consMatchesNativeDownload,
+    consNativeFilenameMatches,
     consNativeDownloadDecision,
     consNormalizeDocumentUrl,
     consProvenanceUrl,
@@ -384,6 +479,7 @@
     consSanitizeDownloadDiagnostics,
     consSanitizePageProbe,
     consSanitizeFolder,
+    consMigrateStoredDownloadFolder,
   };
   Object.assign(globalThis, api);
   if (typeof module !== "undefined" && module.exports) module.exports = api;

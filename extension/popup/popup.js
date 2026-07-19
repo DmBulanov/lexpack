@@ -1,8 +1,5 @@
 const els = {
   pageMeta: document.getElementById("pageMeta"),
-  adapterName: document.getElementById("adapterName"),
-  pageType: document.getElementById("pageType"),
-  listCount: document.getElementById("listCount"),
   format: document.getElementById("format"),
   downloadFolder: document.getElementById("downloadFolder"),
   folderPreview: document.getElementById("folderPreview"),
@@ -15,13 +12,17 @@ const els = {
   rememberQuery: document.getElementById("rememberQuery"),
   btnFind: document.getElementById("btnFind"),
   btnFindSave: document.getElementById("btnFindSave"),
-  btnScan: document.getElementById("btnScan"),
+  contextActions: document.getElementById("contextActions"),
   btnExport: document.getElementById("btnExport"),
   btnOne: document.getElementById("btnOne"),
   btnStop: document.getElementById("btnStop"),
   btnProbe: document.getElementById("btnProbe"),
   btnClearData: document.getElementById("btnClearData"),
+  extensionVersion: document.getElementById("extensionVersion"),
   progressText: document.getElementById("progressText"),
+  progressInfoControl: document.getElementById("progressInfoControl"),
+  progressInfo: document.getElementById("progressInfo"),
+  infoButtons: [...document.querySelectorAll(".info-button[data-info-target]")],
   log: document.getElementById("log"),
 };
 
@@ -43,6 +44,98 @@ let currentCapabilities = consGetAdapterCapabilities(currentAdapter);
 let exportRunning = false;
 let actionPending = false;
 let progressTimer = null;
+let openInfoButton = null;
+
+function infoPopoverFor(button) {
+  const id = button?.dataset.infoTarget;
+  return id ? document.getElementById(id) : null;
+}
+
+function closeInfoPopover({ restoreFocus = false } = {}) {
+  if (!openInfoButton) return;
+  const button = openInfoButton;
+  const popover = infoPopoverFor(button);
+  button.setAttribute("aria-expanded", "false");
+  if (popover) {
+    popover.hidden = true;
+    popover.style.removeProperty("left");
+    popover.style.removeProperty("top");
+    popover.style.removeProperty("visibility");
+  }
+  openInfoButton = null;
+  if (restoreFocus) button.focus();
+}
+
+function positionInfoPopover(button, popover) {
+  const viewportGap = 8;
+  const triggerGap = 6;
+  popover.style.visibility = "hidden";
+  popover.hidden = false;
+  const buttonRect = button.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  const maxLeft = Math.max(viewportGap, window.innerWidth - popoverRect.width - viewportGap);
+  const left = Math.min(maxLeft, Math.max(viewportGap, buttonRect.right - popoverRect.width));
+  let top = buttonRect.bottom + triggerGap;
+  if (top + popoverRect.height > window.innerHeight - viewportGap) {
+    top = buttonRect.top - popoverRect.height - triggerGap;
+  }
+  top = Math.max(viewportGap, Math.min(top, window.innerHeight - popoverRect.height - viewportGap));
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+  popover.style.visibility = "visible";
+}
+
+function openInfoPopover(button) {
+  const popover = infoPopoverFor(button);
+  if (!popover || button.closest("[hidden]")) return;
+  if (openInfoButton && openInfoButton !== button) closeInfoPopover();
+  openInfoButton = button;
+  button.setAttribute("aria-expanded", "true");
+  positionInfoPopover(button, popover);
+}
+
+function setupInfoPopovers() {
+  for (const button of els.infoButtons) {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (openInfoButton === button) closeInfoPopover();
+      else openInfoPopover(button);
+    });
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!openInfoButton) return;
+    const popover = infoPopoverFor(openInfoButton);
+    if (popover?.contains(event.target)) return;
+    closeInfoPopover();
+  });
+  document.addEventListener("focusin", (event) => {
+    if (!openInfoButton) return;
+    const popover = infoPopoverFor(openInfoButton);
+    if (event.target === openInfoButton || popover?.contains(event.target)) return;
+    closeInfoPopover();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !openInfoButton) return;
+    event.preventDefault();
+    closeInfoPopover({ restoreFocus: true });
+  });
+  window.addEventListener("resize", () => {
+    if (!openInfoButton) return;
+    const popover = infoPopoverFor(openInfoButton);
+    if (popover) positionInfoPopover(openInfoButton, popover);
+  });
+  window.addEventListener("scroll", () => closeInfoPopover(), true);
+}
+
+function setProgressInfo(messages = []) {
+  const text = messages.filter(Boolean).join(" ");
+  if (!text && openInfoButton?.dataset.infoTarget === "progressInfo") {
+    closeInfoPopover();
+  }
+  els.progressInfo.textContent = text;
+  els.progressInfoControl.hidden = !text;
+}
 
 async function sendMessage(message) {
   try {
@@ -80,18 +173,23 @@ function updateInstancesState() {
 function updateActionState() {
   const formats = currentCapabilities.exportFormats || [];
   const formatSupported = formats.includes(els.format.value);
+  const listPage = currentPage === "list";
+  const documentPage = currentPage === "document";
+  els.btnExport.hidden = !listPage;
+  els.btnOne.hidden = !documentPage;
   els.btnExport.disabled =
-    exportRunning || actionPending || !cachedItems.length || !formatSupported;
+    exportRunning || actionPending || !formatSupported;
   els.btnOne.disabled =
     exportRunning || actionPending || currentPage !== "document" || !formatSupported;
-  els.btnScan.disabled =
-    exportRunning || actionPending || !["list", "search"].includes(currentPage);
   const instancesReady =
     currentAdapter !== "online-app" || selectedInstances().length > 0;
   els.btnFind.disabled =
     exportRunning || actionPending || currentPage === "auth-required" || !instancesReady;
   els.btnFindSave.disabled =
     exportRunning || actionPending || currentPage === "auth-required" || !instancesReady;
+  els.contextActions.hidden = [els.btnExport, els.btnOne, els.btnStop].every(
+    (button) => button.hidden
+  );
 }
 
 function applyCapabilities(adapter, page, pageCapabilities = {}) {
@@ -122,8 +220,6 @@ function applyCapabilities(adapter, page, pageCapabilities = {}) {
     els.format.value = currentCapabilities.exportFormats[0] || "txt";
   }
 
-  els.adapterName.textContent = currentAdapter;
-  els.pageType.textContent = currentPage;
   updateActionState();
 }
 
@@ -134,14 +230,31 @@ function renderProgress(progress, running) {
     current = 0,
     total = 0,
     completed = 0,
+    unconfirmed = 0,
     failed = 0,
     status = "idle",
     log = [],
   } = progress;
   const label = STATUS_LABELS[status] || status;
+  const outcomes = [];
+  if (unconfirmed > 0 || failed > 0) outcomes.push(`успешно ${completed}`);
+  if (unconfirmed > 0) outcomes.push(`требует проверки ${unconfirmed}`);
+  if (failed > 0) outcomes.push(`ошибок ${failed}`);
   els.progressText.textContent = status === "idle"
     ? label
-    : `${label}: ${current}/${total || "?"}; успешно ${completed}, ошибок ${failed}`;
+    : `${label}: ${current}/${total || "?"}${outcomes.length ? `; ${outcomes.join(", ")}` : ""}`;
+  const hints = [];
+  if (unconfirmed > 0) {
+    hints.push(
+      "«Требует проверки» означает: Chrome не смог надёжно сопоставить загрузку; перед повторным запуском проверьте файл в «Загрузках»."
+    );
+  }
+  if (failed > 0) {
+    hints.push(
+      "Ошибка означает прерванную загрузку или сбой операции; подробность указана в журнале."
+    );
+  }
+  setProgressInfo(hints);
   if (log.length) els.log.textContent = log.join("\n");
   els.btnStop.hidden = !running;
   updateActionState();
@@ -157,7 +270,6 @@ function applyItems(items, meta = {}) {
   cachedItems = Array.isArray(items) ? items : [];
   cachedQuery = String(meta.query || "").slice(0, 2000);
   cachedScope = String(meta.scope || "current-list");
-  els.listCount.textContent = String(cachedItems.length);
   if (meta.adapter || meta.page || meta.capabilities) {
     applyCapabilities(
       meta.adapter || currentAdapter,
@@ -190,6 +302,7 @@ async function storeSettings() {
     downloadFolder: folder,
     maxItems: maxItemsValue(),
     lastInstances: selectedInstances(),
+    settingsSchemaVersion: CONS_SETTINGS_SCHEMA_VERSION,
   };
   if (els.rememberQuery.checked) settings.lastQuery = els.query.value.trim();
   await chrome.storage.local.set(settings);
@@ -200,6 +313,7 @@ async function storeSettings() {
 }
 
 async function init() {
+  els.extensionVersion.textContent = chrome.runtime.getManifest().version;
   const stored = await chrome.storage.local.get([
     "lastQuery",
     "lastScope",
@@ -208,6 +322,7 @@ async function init() {
     "rememberQuery",
     "maxItems",
     "lastInstances",
+    "settingsSchemaVersion",
   ]);
   els.rememberQuery.checked = Boolean(stored.rememberQuery);
   if (els.rememberQuery.checked && stored.lastQuery) els.query.value = stored.lastQuery;
@@ -221,7 +336,16 @@ async function init() {
     }
   }
   els.maxItems.value = String(stored.maxItems || 50);
-  const folder = consSanitizeFolder(stored.downloadFolder || "ConsExport");
+  const folder = consMigrateStoredDownloadFolder(
+    stored.downloadFolder,
+    stored.settingsSchemaVersion
+  );
+  if (Number(stored.settingsSchemaVersion || 0) < CONS_SETTINGS_SCHEMA_VERSION) {
+    await chrome.storage.local.set({
+      downloadFolder: folder,
+      settingsSchemaVersion: CONS_SETTINGS_SCHEMA_VERSION,
+    });
+  }
   els.downloadFolder.value = folder;
   els.folderPreview.textContent = folder;
 
@@ -259,7 +383,6 @@ async function scanList() {
   });
   if (!response?.ok) {
     applyItems([], { emptyMessage: response?.error || "Не удалось прочитать список" });
-    els.listCount.textContent = "ошибка";
     return false;
   }
   applyItems(response.items, {
@@ -281,7 +404,6 @@ async function scanList() {
       els.progressText.textContent =
         `${response.category.label}: собрано ${response.count} из ` +
         `${response.categoryTotal}${suffix}`;
-      els.listCount.textContent = `${response.count} из ${response.categoryTotal}`;
     } else {
       els.progressText.textContent =
         `${response.category.label}: собрано ${response.count}` +
@@ -302,7 +424,8 @@ async function runFind(autoExport) {
   }
   actionPending = true;
   updateActionState();
-  els.progressText.textContent = autoExport ? "поиск + сохранение…" : "поиск…";
+  setProgressInfo();
+  els.progressText.textContent = autoExport ? "поиск и скачивание…" : "поиск…";
   setLog(`Ищем: ${query}`);
 
   try {
@@ -329,7 +452,7 @@ async function runFind(autoExport) {
       emptyMessage: "По запросу список пуст. Уточните формулировку или область поиска.",
     });
     els.progressText.textContent = response.exportStarted
-      ? `сохраняем ${response.count} док.${response.truncated ? " (с учётом лимита)" : ""}`
+      ? `скачиваем ${response.count} док.${response.truncated ? " (с учётом лимита)" : ""}`
       : `найдено: ${response.count || 0}${
           response.truncated ? " (достигнут лимит)" : ""
         }`;
@@ -368,7 +491,8 @@ async function exportCachedItems() {
       return;
     }
     exportRunning = true;
-    els.progressText.textContent = `сохраняем ${response.total} док.`;
+    setProgressInfo();
+    els.progressText.textContent = `скачиваем ${response.total} док.`;
     pollWhileRunning();
   } catch (error) {
     setLog(String(error?.message || error));
@@ -389,11 +513,12 @@ async function exportCurrentDocument() {
       format: els.format.value,
     });
     if (!response?.ok) {
-      setLog(response?.error || "Не удалось сохранить документ");
+      setLog(response?.error || "Не удалось скачать документ");
       return;
     }
     exportRunning = true;
-    els.progressText.textContent = "сохраняем текущий документ…";
+    setProgressInfo();
+    els.progressText.textContent = "скачиваем открытый документ…";
     pollWhileRunning();
   } catch (error) {
     setLog(String(error?.message || error));
@@ -406,6 +531,7 @@ async function exportCurrentDocument() {
 function pollWhileRunning() {
   if (progressTimer) clearInterval(progressTimer);
   els.btnStop.hidden = false;
+  updateActionState();
   progressTimer = setInterval(async () => {
     const running = await refreshProgress();
     if (!running) {
@@ -417,7 +543,6 @@ function pollWhileRunning() {
 
 els.btnFind.addEventListener("click", () => runFind(false));
 els.btnFindSave.addEventListener("click", () => runFind(true));
-els.btnScan.addEventListener("click", () => scanList());
 els.btnExport.addEventListener("click", () => exportCachedItems());
 els.btnOne.addEventListener("click", () => exportCurrentDocument());
 
@@ -426,6 +551,9 @@ els.query.addEventListener("keydown", (event) => {
     event.preventDefault();
     runFind(false);
   }
+});
+els.query.addEventListener("change", () => {
+  if (els.rememberQuery.checked) storeSettings();
 });
 
 els.downloadFolder.addEventListener("change", () => storeSettings());
@@ -466,10 +594,13 @@ els.btnProbe.addEventListener("click", async () => {
     return;
   }
   const text = JSON.stringify(
-    consBuildSafeDiagnosticsSnapshot(
-      pageResponse?.ok ? pageResponse.probe : {},
-      downloadResponse?.ok ? downloadResponse.diagnostics : []
-    ),
+    {
+      version: chrome.runtime.getManifest().version,
+      ...consBuildSafeDiagnosticsSnapshot(
+        pageResponse?.ok ? pageResponse.probe : {},
+        downloadResponse?.ok ? downloadResponse.diagnostics : []
+      ),
+    },
     null,
     2
   );
@@ -478,11 +609,17 @@ els.btnProbe.addEventListener("click", async () => {
     await navigator.clipboard.writeText(text);
     els.progressText.textContent = "Обезличенная диагностика скопирована";
   } catch {
-    els.progressText.textContent = "Диагностика готова";
+    els.progressText.textContent =
+      "Не удалось скопировать — скопируйте диагностику из журнала вручную";
   }
 });
 
 els.btnClearData.addEventListener("click", async () => {
+  if (!confirm(
+    "Сбросить область поиска, формат, подпапку, лимит, инстанции, запомненный запрос и историю задачи? Скачанные файлы и вход не изменятся."
+  )) {
+    return;
+  }
   const response = await sendMessage({ type: "CLEAR_LOCAL_DATA" });
   if (!response?.ok) {
     setLog(response?.error || "Не удалось очистить данные");
@@ -490,16 +627,28 @@ els.btnClearData.addEventListener("click", async () => {
   }
   els.query.value = "";
   els.rememberQuery.checked = false;
-  els.downloadFolder.value = "ConsExport";
-  els.folderPreview.textContent = "ConsExport";
+  els.downloadFolder.value = CONS_DEFAULT_DOWNLOAD_FOLDER;
+  els.folderPreview.textContent = CONS_DEFAULT_DOWNLOAD_FOLDER;
   els.maxItems.value = "50";
+  const defaultScope = [...els.scope.options].find(
+    (option) => option.value === "practice" && !option.disabled
+  ) || [...els.scope.options].find((option) => !option.disabled);
+  const defaultFormat = [...els.format.options].find(
+    (option) => option.value === "docx" && !option.disabled
+  ) || [...els.format.options].find((option) => !option.disabled);
+  if (defaultScope) els.scope.value = defaultScope.value;
+  if (defaultFormat) els.format.value = defaultFormat.value;
   for (const input of els.instanceInputs) {
     input.checked = ["higher-courts", "arbitration-circuit"].includes(input.value);
   }
   applyItems([], { emptyMessage: "Список очищен" });
-  setLog("Локальные настройки, запрос и история экспорта удалены");
+  setLog(
+    "Настройки возвращены по умолчанию. Запомненный запрос и история задачи удалены; скачанные файлы не изменены."
+  );
   await refreshProgress();
 });
+
+setupInfoPopovers();
 
 init().catch((error) => {
   els.pageMeta.textContent = String(error?.message || error);

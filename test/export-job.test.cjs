@@ -62,7 +62,7 @@ function createJob() {
       id: "job-test",
       adapter: "online-app",
       format: "docx",
-      folder: "ConsExport",
+      folder: "ConsDownload",
       query: "аренда",
       scope: "practice",
       items: [
@@ -92,6 +92,7 @@ test("job progress counts processed, completed, and failed items consistently", 
       current: 0,
       total: 2,
       completed: 0,
+      unconfirmed: 0,
       failed: 0,
       stopped: 0,
       status: "running",
@@ -115,6 +116,20 @@ test("job progress counts processed, completed, and failed items consistently", 
   assert.equal(progress.failed, 1);
   assert.equal(job.nextIndex, 2);
   assert.equal(job.lastError, "NETWORK_TIMEOUT");
+});
+
+test("job progress separates unconfirmed downloads from actual failures", () => {
+  const job = createJob();
+  consMarkItemStarted(job, 0);
+  consMarkItemFinished(job, 0, "unconfirmed", {
+    error: "Файл мог сохраниться, но Chrome не подтвердил загрузку",
+  });
+
+  const progress = consJobProgress(job);
+  assert.equal(progress.current, 1);
+  assert.equal(progress.completed, 0);
+  assert.equal(progress.unconfirmed, 1);
+  assert.equal(progress.failed, 0);
 });
 
 test("finishing a job clears transient state and makes it inactive", () => {

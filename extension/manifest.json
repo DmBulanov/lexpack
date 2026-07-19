@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Cons Export — КонсультантПлюс",
-  "version": "0.6.0",
+  "name": "Cons Download — КонсультантПлюс",
+  "version": "0.7.1",
   "minimum_chrome_version": "120",
   "description": "Поиск и массовое сохранение документов из браузерной версии КонсультантПлюс.",
   "permissions": [
@@ -16,7 +16,7 @@
     "https://*.consultant.ru/*"
   ],
   "action": {
-    "default_title": "Cons Export",
+    "default_title": "Cons Download",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
