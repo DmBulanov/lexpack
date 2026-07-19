@@ -164,7 +164,7 @@ test("result quantity is hidden until collection and defaults to the collected c
 test("manual judicial results remain independent from the optional new-search form", () => {
   assert.match(source, /function manualCategoryIsSupported\(category\)/);
   assert.match(source, /CONS_JUDICIAL_INSTANCES\.includes/);
-  assert.match(source, /Выберите слева судебную категорию, которую нужно скачать/);
+  assert.match(source, /Выберите слева уровень судебной инстанции, который нужно скачать/);
   assert.match(source, /source: "current-list"/);
   assert.match(
     source,

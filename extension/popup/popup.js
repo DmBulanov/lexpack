@@ -509,7 +509,7 @@ async function init() {
 function unsupportedManualCategoryMessage(category) {
   const label = String(category?.label || "").trim();
   const prefix = label ? `Сейчас открыт раздел «${label}». ` : "";
-  return `${prefix}Выберите слева судебную категорию, которую нужно скачать.`;
+  return `${prefix}Выберите слева уровень судебной инстанции, который нужно скачать.`;
 }
 
 async function prepareOpenCollection(ping) {
@@ -525,7 +525,7 @@ async function prepareOpenCollection(ping) {
         label: ping.category?.label || "",
       }
     );
-    els.progressText.textContent = "выберите судебную категорию";
+    els.progressText.textContent = "выберите уровень судебной инстанции";
     return false;
   }
   const restored = await restoreCollection(ping);
@@ -566,7 +566,7 @@ async function scanList(initialPing = null) {
         label: ping.category?.label || "",
       }
     );
-    els.progressText.textContent = "выберите судебную категорию";
+    els.progressText.textContent = "выберите уровень судебной инстанции";
     return false;
   }
   const response = await tabMessage({
@@ -599,7 +599,7 @@ async function scanList(initialPing = null) {
         label: response.category?.label || "",
       }
     );
-    els.progressText.textContent = "выберите судебную категорию";
+    els.progressText.textContent = "выберите уровень судебной инстанции";
     return false;
   }
   applyItems(response.items, {
