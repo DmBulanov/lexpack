@@ -130,6 +130,25 @@ test("download completion and native filename determination are explicit", () =>
   );
 });
 
+test("native download behavior is controlled by the selected build variant", () => {
+  assert.match(source, /importScripts\("\.\.\/shared\/variant-config\.js"\)/);
+  assert.match(source, /const NATIVE_DOWNLOAD_CONFIG = globalThis\.LEXPACK_VARIANT\?\.nativeDownloads/);
+  assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.maxAttempts/);
+  assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.controlSettleMs/);
+  assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.lateRecoveryGraceMs/);
+  assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.interItemDelayMs/);
+  assert.match(source, /function isRetryableNativeStartTimeout/);
+  assert.match(source, /recoverTimedOutNativeDownload/);
+  assert.match(source, /consAppendDownloadDiagnostic\(draft, "NM_RETRY"\)/);
+  assert.match(source, /attempts < NATIVE_DOWNLOAD_MAX_ATTEMPTS/);
+  assert.match(source, /draft\.current = null/);
+  assert.match(
+    source,
+    /result\.native && itemIndex \+ 1 < job\.items\.length[\s\S]{0,180}NATIVE_INTER_ITEM_DELAY_MS/
+  );
+  assert.match(source, /После \$\{NATIVE_DOWNLOAD_MAX_ATTEMPTS\} попыток/);
+});
+
 test("download diagnostics are closed, separate from reports, and exposed safely", () => {
   assert.match(source, /consNativeDownloadDecision/);
   assert.match(source, /consAppendDownloadDiagnostic/);

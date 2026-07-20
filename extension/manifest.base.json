@@ -1,9 +1,5 @@
 {
   "manifest_version": 3,
-  "name": "LexPack — КонсультантПлюс",
-  "version": "0.8.3",
-  "minimum_chrome_version": "120",
-  "description": "Поиск и массовое сохранение документов из браузерной версии КонсультантПлюс.",
   "permissions": [
     "alarms",
     "downloads",
@@ -16,7 +12,6 @@
     "https://*.consultant.ru/*"
   ],
   "action": {
-    "default_title": "LexPack",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -35,6 +30,7 @@
         "https://*.consultant.ru/*"
       ],
       "js": [
+        "shared/variant-config.js",
         "shared/filename.js",
         "shared/runtime.js",
         "content/adapters/public-site.js",

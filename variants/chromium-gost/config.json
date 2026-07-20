@@ -1,0 +1,26 @@
+{
+  "id": "chromium-gost",
+  "browserLabel": "Chromium-Gost",
+  "archiveName": "lexpack-chromium-gost-0.8.4.zip",
+  "manifest": {
+    "name": "LexPack — КонсультантПлюс (Chromium-Gost)",
+    "version": "0.8.4",
+    "versionName": "0.8.4-gost",
+    "minimumChromeVersion": "143",
+    "description": "Отдельная сборка LexPack для Chromium-Gost: поиск и устойчивое массовое сохранение документов КонсультантПлюс.",
+    "actionTitle": "LexPack Chromium-Gost"
+  },
+  "popup": {
+    "title": "LexPack Chromium-Gost",
+    "brand": "LexPack · Chromium-Gost"
+  },
+  "nativeDownloads": {
+    "startTimeoutMs": 35000,
+    "completionTimeoutMs": 60000,
+    "maxAttempts": 2,
+    "controlSettleMs": 1500,
+    "lateRecoveryGraceMs": 2500,
+    "interItemDelayMs": 5000,
+    "matchWindowMs": 40000
+  }
+}

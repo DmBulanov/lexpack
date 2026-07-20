@@ -5,9 +5,14 @@ const path = require("node:path");
 const test = require("node:test");
 const { chromium } = require("playwright");
 
-const extensionPath = path.resolve(__dirname, "../../extension");
+const variants = ["chrome", "chromium-gost"].map((id) => ({
+  id,
+  config: require(path.resolve(__dirname, `../../variants/${id}/config.json`)),
+}));
 
-test("unpacked MV3 extension starts its service worker in Chromium", async (t) => {
+for (const variant of variants) {
+test(`unpacked ${variant.id} MV3 extension starts its service worker in Chromium`, async (t) => {
+  const extensionPath = path.resolve(__dirname, `../../build/${variant.id}`);
   const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "cons-export-browser-"));
   let context = null;
   t.after(async () => {
@@ -31,14 +36,47 @@ test("unpacked MV3 extension starts its service worker in Chromium", async (t) =
 
   const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.8.3");
-  assert.match(manifest.name, /LexPack/);
-  assert.equal(manifest.minimum_chrome_version, "120");
+  assert.equal(manifest.version, variant.config.manifest.version);
+  assert.equal(manifest.version_name, variant.config.manifest.versionName);
+  assert.equal(manifest.name, variant.config.manifest.name);
+  assert.equal(
+    manifest.minimum_chrome_version,
+    variant.config.manifest.minimumChromeVersion
+  );
   assert.equal(manifest.icons["32"], "icons/icon32.png");
   assert.equal(manifest.action.default_icon["32"], "icons/icon32.png");
   assert.deepEqual(
     [...manifest.host_permissions].sort(),
     ["https://*.consultant.ru/*", "https://consultant.ru/*"]
+  );
+  const runtimeVariant = await worker.evaluate(() =>
+    JSON.parse(JSON.stringify(globalThis.LEXPACK_VARIANT))
+  );
+  assert.equal(runtimeVariant.id, variant.id);
+  assert.equal(runtimeVariant.browserLabel, variant.config.browserLabel);
+  assert.deepEqual(runtimeVariant.nativeDownloads, variant.config.nativeDownloads);
+  const acceptsGostLateWindow = await worker.evaluate(() => {
+    const triggerAt = Date.parse("2026-07-20T10:00:00.000Z");
+    return consMatchesNativeDownload(
+      {
+        startTime: new Date(triggerAt + 37500).toISOString(),
+        filename: "/Downloads/document.docx",
+        url: "blob:https://online.consultant.ru/download-id",
+        referrer:
+          "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=ASMS&n=42",
+      },
+      {
+        downloadKind: "native",
+        downloadStartedAt: triggerAt,
+        expectedFilename: "01 - document.docx",
+        sourceUrl:
+          "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=ASMS&n=42",
+      }
+    );
+  });
+  assert.equal(
+    acceptsGostLateWindow,
+    variant.config.nativeDownloads.matchWindowMs >= 37500
   );
 
   const popupErrors = [];
@@ -51,7 +89,12 @@ test("unpacked MV3 extension starts its service worker in Chromium", async (t) =
       document.querySelector("#pageMeta")?.textContent !==
       "Найдите практику и скачайте документы"
   );
-  assert.equal(await popup.locator(".brand").innerText(), "LexPack");
+  assert.equal(await popup.locator(".brand").innerText(), variant.config.popup.brand);
+  assert.equal(await popup.title(), variant.config.popup.title);
+  assert.equal(
+    await popup.locator("#extensionVersion").textContent(),
+    variant.config.manifest.versionName
+  );
   assert.equal(await popup.locator("#resultActions").isVisible(), false);
   assert.equal(await popup.locator("#searchPanel").getAttribute("open"), null);
   assert.equal(await popup.locator("#searchSummary").innerText(), "Найти практику");
@@ -205,3 +248,4 @@ test("unpacked MV3 extension starts its service worker in Chromium", async (t) =
   }
   assert.deepEqual(popupErrors, []);
 });
+}

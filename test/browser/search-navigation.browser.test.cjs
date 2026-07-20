@@ -5,7 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { chromium } = require("playwright");
 
-const extensionPath = path.resolve(__dirname, "../../extension");
+const extensionPath = path.resolve(__dirname, "../../build/chrome");
 const SEARCH_QUERY = "навигационная регрессия";
 const expectedSearchUrl = new URL("https://online.consultant.ru/riv/cgi/online.cgi");
 expectedSearchUrl.searchParams.set("req", "card");

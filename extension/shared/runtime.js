@@ -1,6 +1,8 @@
 /** Shared runtime contracts for popup, content scripts, and the service worker. */
 (function () {
-  const NATIVE_DOWNLOAD_MATCH_WINDOW_MS = 35000;
+  const NATIVE_DOWNLOAD_MATCH_WINDOW_MS = Number(
+    globalThis.LEXPACK_VARIANT?.nativeDownloads?.matchWindowMs || 35000
+  );
   const CONS_DEFAULT_DOWNLOAD_FOLDER = "LexPack";
   const CONS_SETTINGS_SCHEMA_VERSION = 2;
   const CONS_DOWNLOAD_DIAGNOSTIC_CODES = Object.freeze([
@@ -21,6 +23,7 @@
     "NM_AMBIGUOUS",
     "NM_ATTACHED",
     "NM_RECOVERED",
+    "NM_RETRY",
     "DG_ARMED",
     "DG_PENDING",
     "DG_CANCEL_EXISTING",

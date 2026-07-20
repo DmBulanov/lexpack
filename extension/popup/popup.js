@@ -1,3 +1,13 @@
+const activeVariant = globalThis.LEXPACK_VARIANT;
+if (!activeVariant) throw new Error("LexPack variant configuration is missing");
+document.title = activeVariant.popupTitle;
+document.querySelector(".brand").textContent = activeVariant.popupBrand;
+
+function extensionVersionLabel() {
+  const manifest = chrome.runtime.getManifest();
+  return manifest.version_name || manifest.version;
+}
+
 const els = {
   pageMeta: document.getElementById("pageMeta"),
   format: document.getElementById("format"),
@@ -436,7 +446,7 @@ async function storeSettings() {
 }
 
 async function init() {
-  els.extensionVersion.textContent = chrome.runtime.getManifest().version;
+  els.extensionVersion.textContent = extensionVersionLabel();
   const stored = await chrome.storage.local.get([
     "lastScope",
     "downloadFolder",
@@ -902,7 +912,7 @@ els.btnProbe.addEventListener("click", async () => {
   }
   const text = JSON.stringify(
     {
-      version: chrome.runtime.getManifest().version,
+      version: extensionVersionLabel(),
       ...consBuildSafeDiagnosticsSnapshot(
         pageResponse?.ok ? pageResponse.probe : {},
         downloadResponse?.ok ? downloadResponse.diagnostics : []

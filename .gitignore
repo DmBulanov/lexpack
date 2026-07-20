@@ -21,6 +21,7 @@ logs/
 .pytest_cache/
 __pycache__/
 node_modules/
+build/
 dist/
 
 # Personal downloads accidentally copied here
