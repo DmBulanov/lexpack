@@ -1,8 +1,8 @@
 {
   "name": "lexpack",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "private": true,
-  "description": "Zero-build Chrome extension for exporting ConsultantPlus documents.",
+  "description": "Controlled Chrome and Chromium-Gost builds of the LexPack extension.",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20"
@@ -11,12 +11,17 @@
     "playwright": "1.61.1"
   },
   "scripts": {
-    "check:syntax": "find extension test -type f \\( -name '*.js' -o -name '*.cjs' \\) -print0 | xargs -0 -n1 node --check",
-    "check:manifest": "node -e \"const fs=require('node:fs');const path=require('node:path');const m=JSON.parse(fs.readFileSync('extension/manifest.json','utf8'));const fail=(message)=>{throw new Error(message)};if(m.manifest_version!==3)fail('manifest_version must be 3');const min=Number(m.minimum_chrome_version);if(!Number.isFinite(min)||min<120)fail('minimum_chrome_version must be a number >= 120');for(const key of ['name','version'])if(!m[key])fail('missing manifest field: '+key);const refs=[m.background?.service_worker,m.action?.default_popup,...Object.values(m.action?.default_icon||{}),...Object.values(m.icons||{}),...(m.content_scripts||[]).flatMap((entry)=>entry.js||[])].filter(Boolean);for(const ref of refs)if(!fs.existsSync(path.join('extension',ref)))fail('missing manifest file: '+ref);console.log('manifest: ok ('+m.version+')');\"",
+    "build": "node scripts/build.mjs all",
+    "build:chrome": "node scripts/build.mjs chrome",
+    "build:gost": "node scripts/build.mjs chromium-gost",
+    "check:syntax": "find extension scripts test -type f \\( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check",
+    "check:manifest": "npm run build && node scripts/check-builds.mjs all",
     "test:unit": "node --test test/*.test.cjs",
-    "test:browser": "node --test --test-concurrency=1 test/browser/*.test.cjs",
+    "test:browser": "npm run build && node --test --test-concurrency=1 test/browser/*.test.cjs",
     "test": "npm run test:unit && npm run test:browser",
     "check": "npm run check:syntax && npm run check:manifest && npm test",
-    "package": "mkdir -p dist && cd extension && zip -q -r -FS ../dist/lexpack.zip . -x '*.DS_Store' && unzip -tq ../dist/lexpack.zip"
+    "package": "node scripts/package.mjs all",
+    "package:chrome": "node scripts/package.mjs chrome",
+    "package:gost": "node scripts/package.mjs chromium-gost"
   }
 }

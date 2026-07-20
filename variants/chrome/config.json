@@ -1,0 +1,26 @@
+{
+  "id": "chrome",
+  "browserLabel": "Chrome",
+  "archiveName": "lexpack-chrome-0.8.4.zip",
+  "manifest": {
+    "name": "LexPack — КонсультантПлюс (Chrome)",
+    "version": "0.8.4",
+    "versionName": "0.8.4-chrome",
+    "minimumChromeVersion": "120",
+    "description": "Сборка LexPack для Google Chrome: поиск и массовое сохранение документов КонсультантПлюс.",
+    "actionTitle": "LexPack Chrome"
+  },
+  "popup": {
+    "title": "LexPack Chrome",
+    "brand": "LexPack · Chrome"
+  },
+  "nativeDownloads": {
+    "startTimeoutMs": 35000,
+    "completionTimeoutMs": 60000,
+    "maxAttempts": 1,
+    "controlSettleMs": 0,
+    "lateRecoveryGraceMs": 0,
+    "interItemDelayMs": 0,
+    "matchWindowMs": 35000
+  }
+}

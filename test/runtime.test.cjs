@@ -255,7 +255,7 @@ test("native download matching rejects unrelated time, format, host, and documen
     true
   );
   assert.equal(
-    consMatchesNativeDownload({ ...candidate, startTime: "2026-07-18T10:00:36.000Z" }, current),
+    consMatchesNativeDownload({ ...candidate, startTime: "2026-07-18T10:00:35.001Z" }, current),
     false
   );
   assert.equal(

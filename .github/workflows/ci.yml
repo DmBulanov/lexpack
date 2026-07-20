@@ -28,12 +28,16 @@ jobs:
       - name: Run syntax, manifest, and test checks
         run: npm run check
 
-      - name: Build extension ZIP
+      - name: Build extension ZIPs
         run: npm run package
 
-      - name: Upload extension artifact
+      - name: Upload controlled browser variants
         uses: actions/upload-artifact@v4
         with:
-          name: lexpack-extension
-          path: dist/lexpack.zip
+          name: lexpack-browser-variants
+          path: |
+            dist/lexpack-chrome-*.zip
+            dist/lexpack-chromium-gost-*.zip
+            dist/release-index.json
+            dist/SHA256SUMS
           if-no-files-found: error

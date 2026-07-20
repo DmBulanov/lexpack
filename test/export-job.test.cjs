@@ -21,10 +21,12 @@ test("download diagnostics accept only closed codes and never copy sensitive val
 
   consAppendDownloadDiagnostic(job, "NM_REFERRER", 1, Date.UTC(2026, 6, 18, 10, 0, 1));
   consAppendDownloadDiagnostic(job, "DG_CANCEL_EXISTING", 4, Date.UTC(2026, 6, 18, 10, 0, 2));
+  consAppendDownloadDiagnostic(job, "NM_RETRY", 1, Date.UTC(2026, 6, 18, 10, 0, 3));
 
   assert.deepEqual(job.downloadDiagnostics, [
     { at: "2026-07-18T10:00:01.000Z", code: "NM_REFERRER", countBucket: "1" },
     { at: "2026-07-18T10:00:02.000Z", code: "DG_CANCEL_EXISTING", countBucket: "many" },
+    { at: "2026-07-18T10:00:03.000Z", code: "NM_RETRY", countBucket: "1" },
   ]);
   assert.doesNotMatch(JSON.stringify(job.downloadDiagnostics), /SECRET_/);
   assert.throws(() => consAppendDownloadDiagnostic(job, "RAW_ERROR"), /Неизвестный/);

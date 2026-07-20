@@ -1,9 +1,15 @@
 /** Background orchestration for search, durable export jobs, and downloads. */
 
+importScripts("../shared/variant-config.js");
 importScripts("../shared/filename.js");
 importScripts("../shared/runtime.js");
 importScripts("export-job.js");
 importScripts("search-flow.js");
+
+const NATIVE_DOWNLOAD_CONFIG = globalThis.LEXPACK_VARIANT?.nativeDownloads;
+if (!NATIVE_DOWNLOAD_CONFIG) {
+  throw new Error("LexPack variant configuration is missing");
+}
 
 const JOB_STORAGE_KEY = "exportJob";
 const PROGRESS_STORAGE_KEY = "exportProgress";
@@ -14,11 +20,16 @@ const MAX_EXPORT_ITEMS = 200;
 const TAB_TIMEOUT_MS = 45000;
 const CONTENT_TIMEOUT_MS = 12000;
 const DIRECT_DOWNLOAD_TIMEOUT_MS = 90000;
-const NATIVE_DOWNLOAD_START_TIMEOUT_MS = 35000;
-const NATIVE_DOWNLOAD_TIMEOUT_MS = 60000;
+const NATIVE_DOWNLOAD_START_TIMEOUT_MS = NATIVE_DOWNLOAD_CONFIG.startTimeoutMs;
+const NATIVE_DOWNLOAD_TIMEOUT_MS = NATIVE_DOWNLOAD_CONFIG.completionTimeoutMs;
+const NATIVE_DOWNLOAD_MAX_ATTEMPTS = NATIVE_DOWNLOAD_CONFIG.maxAttempts;
+const NATIVE_CONTROL_SETTLE_MS = NATIVE_DOWNLOAD_CONFIG.controlSettleMs;
+const NATIVE_LATE_RECOVERY_GRACE_MS = NATIVE_DOWNLOAD_CONFIG.lateRecoveryGraceMs;
+const NATIVE_INTER_ITEM_DELAY_MS = NATIVE_DOWNLOAD_CONFIG.interItemDelayMs;
 const POLL_MS = 400;
 const DOWNLOAD_UNCONFIRMED_CODE = "DOWNLOAD_UNCONFIRMED";
 const CONTENT_SCRIPT_FILES = [
+  "shared/variant-config.js",
   "shared/filename.js",
   "shared/runtime.js",
   "content/adapters/public-site.js",
@@ -47,6 +58,24 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForActiveJobDelay(jobId, timeoutMs) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+  while (Date.now() < deadline) {
+    const job = await readJob();
+    if (
+      !job ||
+      job.id !== jobId ||
+      !consIsJobActive(job) ||
+      job.stopRequested ||
+      job.status === "stopping"
+    ) {
+      return false;
+    }
+    await delay(Math.min(POLL_MS, Math.max(0, deadline - Date.now())));
+  }
+  return true;
+}
+
 function errorText(error) {
   return String(error?.message || error || "Неизвестная ошибка");
 }
@@ -59,6 +88,15 @@ function unconfirmedDownloadError(message) {
 
 function isUnconfirmedDownloadError(error) {
   return [DOWNLOAD_UNCONFIRMED_CODE, "NM_AMBIGUOUS"].includes(error?.code);
+}
+
+function isRetryableNativeStartTimeout(error, job, itemIndex) {
+  return Boolean(
+    error?.code === DOWNLOAD_UNCONFIRMED_CODE &&
+      job?.current?.itemIndex === itemIndex &&
+      job.current.downloadKind === "native" &&
+      job.current.downloadId == null
+  );
 }
 
 async function readJob() {
@@ -668,7 +706,44 @@ async function resumeExistingDownload(job) {
     downloadId,
     filename: downloadBasename(completed, current.expectedFilename),
     completed,
+    native: current.downloadKind === "native",
   };
+}
+
+async function recoverTimedOutNativeDownload(job, graceMs) {
+  if (!job?.current || job.current.downloadKind !== "native") return null;
+  const active = await waitForActiveJobDelay(job.id, graceMs);
+  if (!active) return null;
+
+  let latest = await readJob();
+  if (
+    !latest ||
+    latest.id !== job.id ||
+    latest.current?.downloadKind !== "native"
+  ) {
+    return null;
+  }
+
+  if (latest.current.downloadId == null) {
+    const recovered = await findRecentDownload(latest.current);
+    if (!recovered) return null;
+    await mutateJob((draft) => {
+      if (
+        draft.id === job.id &&
+        draft.current?.downloadKind === "native" &&
+        draft.current.downloadId == null
+      ) {
+        draft.current.downloadId = recovered.id;
+        draft.phase = "waiting_download";
+        consAppendDownloadDiagnostic(draft, "NM_RECOVERED");
+      }
+      return draft;
+    });
+    latest = await readJob();
+  }
+
+  if (latest?.current?.downloadId == null) return null;
+  return resumeExistingDownload(latest);
 }
 
 function downloadBasename(downloadItem, fallback) {
@@ -713,6 +788,8 @@ async function processExportItem(job, itemIndex) {
     await assertJobCanContinue(job.id);
 
     if (isNative) {
+      const settled = await waitForActiveJobDelay(job.id, NATIVE_CONTROL_SETTLE_MS);
+      if (!settled) await assertJobCanContinue(job.id);
       const startedAt = Date.now();
       await updateCurrent(
         job.id,
@@ -742,7 +819,11 @@ async function processExportItem(job, itemIndex) {
         downloadId,
         NATIVE_DOWNLOAD_TIMEOUT_MS
       );
-      return { downloadId, filename: downloadBasename(completed, expectedFilename) };
+      return {
+        downloadId,
+        filename: downloadBasename(completed, expectedFilename),
+        native: true,
+      };
     }
 
     const extracted = await sendToTab(tab.id, {
@@ -1019,18 +1100,107 @@ async function runStoredJob() {
         consAppendJobLog(draft, `OK [${itemIndex + 1}] ${draft.items[itemIndex].title.slice(0, 70)}`);
         return draft;
       });
-    } catch (error) {
-      const latest = await readJob();
+      if (result.native && itemIndex + 1 < job.items.length) {
+        await waitForActiveJobDelay(job.id, NATIVE_INTER_ITEM_DELAY_MS);
+      }
+    } catch (caughtError) {
+      let error = caughtError;
+      let latest = await readJob();
       if (latest?.stopRequested || latest?.status === "stopping") {
         await stopCurrentWork(latest);
         return;
       }
+
+      const nativeStartTimedOut = isRetryableNativeStartTimeout(
+        error,
+        latest,
+        itemIndex
+      );
+      await cleanupResources(latest);
+
+      if (nativeStartTimedOut) {
+        let recovered = null;
+        try {
+          recovered = await recoverTimedOutNativeDownload(
+            latest,
+            NATIVE_LATE_RECOVERY_GRACE_MS
+          );
+        } catch (recoveryError) {
+          error = recoveryError;
+        }
+
+        latest = await readJob();
+        if (latest?.stopRequested || latest?.status === "stopping") {
+          await stopCurrentWork(latest);
+          return;
+        }
+
+        if (recovered) {
+          await mutateJob((draft) => {
+            consMarkItemFinished(draft, itemIndex, "completed", recovered);
+            consAppendJobLog(
+              draft,
+              `OK [${itemIndex + 1}] запоздавшая загрузка подтверждена`
+            );
+            return draft;
+          });
+          if (itemIndex + 1 < job.items.length) {
+            await waitForActiveJobDelay(job.id, NATIVE_INTER_ITEM_DELAY_MS);
+          }
+          job = await readJob();
+          continue;
+        }
+
+        const attempts = Number(latest?.items?.[itemIndex]?.attempts || 0);
+        if (
+          attempts < NATIVE_DOWNLOAD_MAX_ATTEMPTS &&
+          isRetryableNativeStartTimeout(error, latest, itemIndex)
+        ) {
+          const retryState = await mutateJob((draft) => {
+            if (
+              draft.id !== job.id ||
+              !consIsJobActive(draft) ||
+              draft.stopRequested ||
+              draft.status === "stopping" ||
+              !isRetryableNativeStartTimeout(error, draft, itemIndex) ||
+              Number(draft.items?.[itemIndex]?.attempts || 0) >=
+                NATIVE_DOWNLOAD_MAX_ATTEMPTS
+            ) {
+              return draft;
+            }
+            const nextAttempt = Number(draft.items[itemIndex].attempts || 0) + 1;
+            draft.items[itemIndex].status = "queued";
+            draft.items[itemIndex].error = null;
+            draft.phase = "native_retry_wait";
+            draft.current = null;
+            consAppendDownloadDiagnostic(draft, "NM_RETRY");
+            consAppendJobLog(
+              draft,
+              `Повтор [${itemIndex + 1}]: попытка ${nextAttempt}/${NATIVE_DOWNLOAD_MAX_ATTEMPTS}`
+            );
+            return draft;
+          });
+          if (retryState?.id === job.id && consIsJobActive(retryState)) {
+            job = retryState;
+            continue;
+          }
+          latest = retryState || latest;
+        }
+      }
+
       await cleanupResources(latest);
       await mutateJob((draft) => {
         const status = isUnconfirmedDownloadError(error) ? "unconfirmed" : "failed";
-        consMarkItemFinished(draft, itemIndex, status, { error: errorText(error) });
+        const attempts = Number(draft.items?.[itemIndex]?.attempts || 0);
+        const retryExhausted =
+          attempts >= NATIVE_DOWNLOAD_MAX_ATTEMPTS &&
+          isRetryableNativeStartTimeout(error, draft, itemIndex);
+        const message = retryExhausted
+          ? `После ${NATIVE_DOWNLOAD_MAX_ATTEMPTS} попыток расширение не подтвердило начало загрузки; файл мог сохраниться в «Загрузки»`
+          : errorText(error);
+        consMarkItemFinished(draft, itemIndex, status, { error: message });
         const prefix = status === "unconfirmed" ? "ПРОВЕРИТЬ" : "ERR";
-        consAppendJobLog(draft, `${prefix} [${itemIndex + 1}] ${errorText(error)}`);
+        consAppendJobLog(draft, `${prefix} [${itemIndex + 1}] ${message}`);
         return draft;
       });
     }
