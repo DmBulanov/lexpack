@@ -15,35 +15,8 @@
     <section id="resultActions" class="block result-actions" hidden>
       <div id="resultTitle" class="result-title">Открытая подборка</div>
       <div id="foundSummary" class="result-summary" aria-live="polite"></div>
-      <div id="resultQuantity" hidden>
-        <div class="label-row">
-          <label class="label" for="maxItems">Количество документов</label>
-          <span class="info-control">
-            <button
-              class="info-button"
-              type="button"
-              aria-label="О количестве документов"
-              aria-haspopup="dialog"
-              aria-expanded="false"
-              aria-controls="limitInfo"
-              data-info-target="limitInfo"
-            >i</button>
-            <span
-              id="limitInfo"
-              class="info-popover"
-              role="dialog"
-              aria-label="Количество документов"
-              hidden
-            >
-              После поиска автоматически выбраны все найденные документы, но не
-              более 200 за одну задачу. Перед скачиванием количество можно уменьшить.
-            </span>
-          </span>
-        </div>
-        <input id="maxItems" type="number" min="1" max="200" value="1" />
-      </div>
       <button id="btnExport" class="btn primary" type="button" disabled hidden>
-        Скачать документы
+        Настроить выгрузку
       </button>
     </section>
 
@@ -70,8 +43,8 @@
             hidden
           >
             «Найти» собирает выбранные судебные инстанции без скачивания.
-            После поиска LexPack покажет количество документов и одну кнопку
-            скачивания.
+            После поиска LexPack откроет предварительный план, где можно выбрать
+            отдельные документы, профиль, имена и папки.
             Пример запроса: взыскание задолженности по аренде нежилого помещения.
           </span>
         </span>
@@ -189,15 +162,9 @@
             aria-label="Папка загрузки"
             hidden
           >
-            <span id="browserDownloadsHelp">
-              Расширение предлагает путь Загрузки/<span id="folderPreview">LexPack</span>/…
-              для документов и JSON-отчёта. Основную папку и запрос места задаёт
-              Chrome.
-            </span>
-            <span id="safariDownloadsHelp" hidden>
-              Приложение LexPack Safari подтверждает загрузку и перемещает готовый
-              файл в Загрузки/<span id="safariFolderPreview">LexPack</span>/… .
-            </span>
+            Расширение предлагает путь Загрузки/<span id="folderPreview">LexPack</span>/…
+            для документов и JSON-отчёта. Основную папку и запрос места задаёт
+            браузер.
             JSON — текстовый файл, его можно открыть в текстовом редакторе.
             <button id="btnOpenDownloadsSettings" class="linkish" type="button">
               Настройки загрузок Chrome
@@ -296,9 +263,9 @@
               aria-label="Сброс настроек"
               hidden
             >
-              Возвращает область, формат, подпапку и инстанции по
-              умолчанию; удаляет текущую подборку и историю задачи. Скачанные
-              файлы, настройки Chrome и вход не изменяются.
+              Возвращает настройки по умолчанию; удаляет пользовательские
+              профили, текущую подборку, очередь и локальную историю. Скачанные
+              документы и отчёты, системная папка загрузок и вход не изменяются.
             </span>
           </span>
         </div>
@@ -306,6 +273,7 @@
     </details>
 
     <script src="../shared/variant-config.js"></script>
+    <script src="../shared/filename.js"></script>
     <script src="../shared/runtime.js"></script>
     <script src="popup.js"></script>
   </body>

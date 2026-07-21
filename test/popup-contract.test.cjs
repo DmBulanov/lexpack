@@ -12,7 +12,8 @@ const html = fs.readFileSync(
   "utf8"
 );
 
-test("popup retries Safari's empty cold-start response once", () => {
+test("popup retries an empty MV3 cold-start response once", () => {
+  assert.match(html, /shared\/filename\.js[\s\S]*shared\/runtime\.js/);
   assert.match(
     source,
     /response === undefined \|\| response === null[\s\S]{0,180}setTimeout\(resolve, 150\)[\s\S]{0,180}chrome\.runtime\.sendMessage\(message\)/
@@ -20,16 +21,21 @@ test("popup retries Safari's empty cold-start response once", () => {
   assert.match(source, /Фоновый процесс расширения не ответил/);
 });
 
-test("cached result provenance is exported with the cached list", () => {
+test("cached result provenance is retained for the planner", () => {
   assert.match(source, /let cachedQuery = ""/);
   assert.match(source, /let cachedScope = "current-list"/);
   assert.match(source, /cachedQuery = String\(meta\.query \|\| ""\)/);
   assert.match(source, /cachedScope = String\(meta\.scope \|\| "current-list"\)/);
-  assert.match(source, /query: cachedQuery,[\s\S]*scope: cachedScope/);
-  assert.doesNotMatch(
+  assert.match(
     source,
-    /type: "START_TAB_EXPORT",[\s\S]{0,400}query: els\.query\.value\.trim\(\)/
+    /type: "CACHE_SEARCH_COLLECTION",[\s\S]{0,900}query: response\.query \|\| "",[\s\S]{0,300}scope:/
   );
+  assert.match(
+    source,
+    /query: cache\.query \|\| "",[\s\S]{0,180}scope: cache\.scope \|\| "current-list"/
+  );
+  assert.match(source, /chrome\.runtime\.getURL\("planner\/planner\.html"\)/);
+  assert.doesNotMatch(source, /type: "START_TAB_EXPORT"/);
 });
 
 test("copied diagnostics add only the version to the shared allowlist and omit the job log", () => {
@@ -68,11 +74,9 @@ test("popup exposes instance selection and full collection of the user-selected 
   assert.doesNotMatch(source, /type: "COLLECT_LIST",[\s\S]{0,160}prevalidated: true/);
 });
 
-test("popup explains the result-sized quantity, report, and exceptional downloads", () => {
-  assert.match(
-    html,
-    /id="limitInfo"[\s\S]*автоматически выбраны все найденные документы[\s\S]*не\s+более 200/i
-  );
+test("popup sends collected results to the planner and explains exceptional downloads", () => {
+  assert.match(html, /Настроить выгрузку/);
+  assert.match(html, /предварительный план[\s\S]*выбрать[\s\S]*имена и папки/i);
   assert.doesNotMatch(html, /rememberQuery|rememberInfo|Запомнить запрос/);
   assert.match(html, /JSON — текстовый файл, его можно открыть в текстовом редакторе/);
   assert.match(source, /unconfirmed = 0/);
@@ -86,7 +90,6 @@ test("every explanatory hint is an accessible on-demand info popover", () => {
   const targets = [
     "searchInfo",
     "scopeInfo",
-    "limitInfo",
     "formatInfo",
     "folderInfo",
     "progressInfo",
@@ -123,13 +126,14 @@ test("popup uses concise user-facing actions and keeps support tools collapsed",
   assert.doesNotMatch(html, /id="btnFindSave"/);
   assert.doesNotMatch(source, /btnFindSave|autoExport/);
   assert.match(source, /btnFind\.addEventListener\("click", \(\) => runFind\(\)\)/);
-  assert.match(source, /`Скачать \$\{selected\} \$\{documentWord\(selected\)\}`/);
+  assert.match(source, /`Настроить выгрузку · \$\{available\}`/);
+  assert.match(source, /async function openPlanner\(\)/);
   assert.match(html, /Скачать открытый документ/);
   assert.match(html, /<summary>Помощь при ошибке<\/summary>/);
   assert.match(html, /Скопировать диагностику/);
   assert.match(html, /Сбросить настройки и историю/);
   assert.match(html, /Подпапка для документов и отчёта/);
-  assert.match(html, /Основную папку и запрос места задаёт\s+Chrome/);
+  assert.match(html, /Основную папку и запрос места задаёт\s+браузер/);
   assert.match(html, /Настройки загрузок Chrome/);
   assert.doesNotMatch(html, /Адаптер:|Страница:|В списке:/);
   assert.doesNotMatch(html, /Можно выбрать несколько:/);
@@ -150,24 +154,14 @@ test("popup uses concise user-facing actions and keeps support tools collapsed",
   assert.doesNotMatch(source, /els\.rememberQuery|rememberQuery\.checked/);
 });
 
-test("result quantity is hidden until collection and defaults to the collected count", () => {
+test("collection action opens planner and has no first-N quantity control", () => {
   assert.match(
     html,
     /<section id="resultActions" class="block result-actions" hidden>/
   );
-  assert.match(html, /<label class="label" for="maxItems">Количество документов<\/label>/);
-  assert.match(source, /const available = Math\.min\(200, cachedItems\.length\)/);
-  assert.match(source, /els\.maxItems\.max = String\(Math\.max\(1, available\)\)/);
-  assert.match(
-    source,
-    /els\.maxItems\.value = String\(Math\.max\(1, cachedItems\.length\)\)/
-  );
-  assert.match(source, /els\.maxItems\.addEventListener\("input"/);
-  assert.match(source, /els\.maxItems\.addEventListener\("change"/);
-  assert.match(
-    source,
-    /els\.maxItems\.addEventListener\("keydown"[\s\S]{0,180}event\.metaKey[\s\S]{0,180}exportCachedItems\(\)/
-  );
+  assert.doesNotMatch(html, /id="maxItems"|id="resultQuantity"|id="limitInfo"/);
+  assert.doesNotMatch(source, /maxItemsValue|exportCachedItems|els\.maxItems/);
+  assert.match(source, /btnExport\.addEventListener\("click", \(\) => handleCollectionButton\(\)\)/);
   assert.ok(
     html.indexOf('id="resultActions"') < html.indexOf('class="block search-block"'),
     "the already-open collection must appear before the new-search form"

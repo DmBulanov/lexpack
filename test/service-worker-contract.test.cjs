@@ -149,26 +149,13 @@ test("native download behavior is controlled by the selected build variant", () 
   assert.match(source, /После \$\{NATIVE_DOWNLOAD_MAX_ATTEMPTS\} попыток/);
 });
 
-test("Safari routes files through its native app without Chromium download APIs", () => {
-  assert.match(source, /const FILE_BACKEND = globalThis\.LEXPACK_VARIANT\?\.fileBackend/);
-  assert.match(source, /const USE_BROWSER_DOWNLOADS = FILE_BACKEND === "browser-downloads"/);
-  assert.match(source, /const USE_SAFARI_NATIVE = FILE_BACKEND === "safari-native"/);
-  assert.match(
-    source,
-    /if \(USE_BROWSER_DOWNLOADS\) \{[\s\S]{0,120}chrome\.downloads\.onDeterminingFilename\.addListener/
-  );
-  assert.match(source, /chrome\.runtime\.sendNativeMessage\("ru\.lexpack\.safari"/);
-  assert.match(source, /chrome\.runtime\.connectNative\("ru\.lexpack\.safari"\)/);
-  assert.match(source, /SAFARI_DOWNLOADS_BOOKMARK_KEY/);
-  assert.match(source, /request\.downloadsBookmark = bookmark/);
-  assert.match(source, /safariNativeRequest\("SAVE_TEXT_FILE"/);
-  assert.match(source, /safariNativeRequest\("PREPARE_DOWNLOAD"/);
-  assert.match(source, /safariNativeRequest\("CLAIM_DOWNLOAD"/);
-  assert.match(source, /current\.downloadKind === "safari-native"/);
-  assert.match(source, /Safari прервал подтверждение создаваемого файла/);
+test("both variants route files through Chromium download APIs", () => {
+  assert.match(source, /chrome\.downloads\.onDeterminingFilename\.addListener/);
+  assert.match(source, /chrome\.downloads\.onCreated\.addListener/);
+  assert.match(source, /chrome\.downloads\.download/);
 });
 
-test("download diagnostics are closed, separate from reports, and exposed safely", () => {
+test("download diagnostics are closed, sanitized in reports, and exposed safely", () => {
   assert.match(source, /consNativeDownloadDecision/);
   assert.match(source, /consAppendDownloadDiagnostic/);
   assert.match(source, /case "GET_DOWNLOAD_DIAGNOSTICS"/);
@@ -177,9 +164,21 @@ test("download diagnostics are closed, separate from reports, and exposed safely
     source.indexOf("function serializeJobReport"),
     source.indexOf("async function saveJobReport")
   );
-  assert.doesNotMatch(reportBody, /downloadDiagnostics|nativeMatchCode/);
-  assert.match(reportBody, /schemaVersion: 2/);
-  assert.match(reportBody, /unconfirmed: progress\.unconfirmed/);
+  assert.match(reportBody, /consBuildReportV2/);
+  assert.doesNotMatch(reportBody, /nativeMatchCode|downloadId/);
+  const reportSchema = fs.readFileSync(
+    path.resolve(__dirname, "../extension/shared/report-schema.js"),
+    "utf8"
+  );
+  assert.match(reportSchema, /schemaVersion: 2/);
+  assert.match(reportSchema, /downloadDiagnostics: runtimeApi\.consSanitizeDownloadDiagnostics/);
+  assert.match(reportSchema, /unconfirmed: 0/);
+});
+
+test("report query privacy and the final download path are enforced by the worker", () => {
+  assert.match(source, /reportQueryIncluded: historyMode === "detailed"/);
+  assert.match(source, /function suggestedFilenameFor[\s\S]{0,700}consSafeRelativeDownloadPath/);
+  assert.match(source, /async function downloadGeneratedFile[\s\S]{0,240}consSafeRelativeDownloadPath/);
 });
 
 test("stop requests are checked before tab extraction and while saving the report", () => {
@@ -210,7 +209,6 @@ test("local reset removes every extension setting, completed job, and cached col
   ]) {
     assert.match(resetBody, new RegExp(`"${key}"`));
   }
-  assert.match(resetBody, /SAFARI_DOWNLOADS_BOOKMARK_KEY/);
   assert.match(
     resetBody,
     /chrome\.storage\.session\.remove\(\[[\s\S]{0,120}JOB_STORAGE_KEY,[\s\S]{0,80}PROGRESS_STORAGE_KEY,[\s\S]{0,80}SEARCH_COLLECTION_STORAGE_KEY,[\s\S]{0,40}\]\)/

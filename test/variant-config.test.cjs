@@ -6,24 +6,18 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..");
 const chrome = require(path.join(root, "variants/chrome/config.json"));
 const gost = require(path.join(root, "variants/chromium-gost/config.json"));
-const safari = require(path.join(root, "variants/safari/config.json"));
 const baseManifest = require(path.join(root, "extension/manifest.base.json"));
 
-test("Chrome, Chromium-Gost, and Safari are explicit independently versioned variants", () => {
+test("Chrome and Chromium-Gost are explicit independently versioned variants", () => {
   assert.equal(chrome.id, "chrome");
-  assert.equal(chrome.manifest.versionName, "0.8.4-chrome");
+  assert.equal(chrome.manifest.versionName, "0.9.0-chrome");
   assert.match(chrome.manifest.name, /\(Chrome\)$/);
-  assert.equal(chrome.archiveName, "lexpack-chrome-0.8.4.zip");
+  assert.equal(chrome.archiveName, "lexpack-chrome-0.9.0.zip");
 
   assert.equal(gost.id, "chromium-gost");
-  assert.equal(gost.manifest.versionName, "0.8.4-gost");
+  assert.equal(gost.manifest.versionName, "0.9.0-gost");
   assert.match(gost.manifest.name, /\(Chromium-Gost\)$/);
-  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.8.4.zip");
-
-  assert.equal(safari.id, "safari");
-  assert.equal(safari.manifest.versionName, "0.8.4-safari");
-  assert.match(safari.manifest.name, /\(Safari\)$/);
-  assert.equal(safari.fileBackend, "safari-native");
+  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.9.0.zip");
 });
 
 test("only Chromium-Gost enables the slower guarded native-download policy", () => {
@@ -45,12 +39,6 @@ test("only Chromium-Gost enables the slower guarded native-download policy", () 
     interItemDelayMs: 5000,
     matchWindowMs: 40000,
   });
-});
-
-test("Safari uses a native file bridge without Chromium-only permissions", () => {
-  assert.equal(safari.nativeDownloads.maxAttempts, 1);
-  assert.equal(safari.nativeDownloads.interItemDelayMs, 1500);
-  assert.equal(safari.downloadsHelp.settingsUrl, "");
 });
 
 test("the base manifest loads generated variant configuration first", () => {

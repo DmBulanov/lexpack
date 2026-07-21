@@ -102,10 +102,8 @@ test(`unpacked ${variant.id} MV3 extension starts its service worker in Chromium
   await popup.locator("#searchSummary").click();
   assert.equal(await popup.locator("#query").isVisible(), true);
   assert.equal(await popup.locator(".info-popover:visible").count(), 0);
-  assert.match(
-    await popup.locator("#limitInfo").textContent(),
-    /автоматически выбраны[\s\S]*не\s+более 200/
-  );
+  assert.equal(await popup.locator("#maxItems").count(), 0);
+  assert.equal(await popup.locator("#limitInfo").count(), 0);
   await popup.locator('[data-info-target="searchInfo"]').click();
   await popup.locator('[data-info-target="scopeInfo"]').click();
   assert.equal(await popup.locator("#searchInfo").isVisible(), false);
@@ -200,6 +198,23 @@ test(`unpacked ${variant.id} MV3 extension starts its service worker in Chromium
       rememberQuery: true,
       maxItems: 17,
       lastInstances: ["arbitration-first"],
+      exportProfileState: {
+        schemaVersion: 1,
+        selectedProfileId: "custom",
+        profiles: [{
+          schemaVersion: 1,
+          id: "custom",
+          name: "Будет удалён",
+          format: "pdf",
+          filenameTemplate: "{title}",
+          folderTemplate: "LexPack",
+          collisionPolicy: "ordered-suffix",
+          createdAt: "2026-07-21T10:00:00.000Z",
+          updatedAt: "2026-07-21T10:00:00.000Z",
+        }],
+      },
+      historyMode: "detailed",
+      exportHistory: { schemaVersion: 1, records: [] },
     });
   });
   await popup.reload();
@@ -246,8 +261,15 @@ test(`unpacked ${variant.id} MV3 extension starts its service worker in Chromium
     "maxItems",
     "lastInstances",
     "settingsSchemaVersion",
+    "exportProfileState",
+    "historyMode",
+    "exportHistory",
   ]) {
     assert.equal(remainingSettings[key], undefined);
+  }
+  const remainingSession = await worker.evaluate(async () => chrome.storage.session.get(null));
+  for (const key of ["exportJob", "exportProgress", "searchCollection"]) {
+    assert.equal(remainingSession[key], undefined);
   }
   assert.deepEqual(popupErrors, []);
 });

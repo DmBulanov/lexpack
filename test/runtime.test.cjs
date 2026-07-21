@@ -17,6 +17,7 @@ const {
   consProvenanceUrl,
   consRedactUrl,
   consSanitizeFolder,
+  consSafeRelativeDownloadPath,
 } = require("../extension/shared/runtime.js");
 
 test("judicial instance selection is a closed, deduplicated allowlist", () => {
@@ -170,6 +171,21 @@ test("folder sanitization removes traversal, reserved names, and invalid charact
   assert.equal(consMigrateStoredDownloadFolder("ConsExport", 2), "ConsExport");
   assert.equal(consMigrateStoredDownloadFolder("ConsDownload", 2), "ConsDownload");
   assert.equal(consMigrateStoredDownloadFolder("Практика", 1), "Практика");
+});
+
+test("the final download boundary rebuilds a safe relative path from storage fields", () => {
+  assert.deepEqual(
+    consSafeRelativeDownloadPath("/../../Практика/CON", "../NUL.pdf"),
+    {
+      folder: "Практика/_CON",
+      filename: "_NUL.pdf",
+      path: "Практика/_CON/_NUL.pdf",
+    }
+  );
+  assert.equal(
+    consSafeRelativeDownloadPath("LexPack/Дела", "01 - Решение.pdf").path,
+    "LexPack/Дела/01 - Решение.pdf"
+  );
 });
 
 test("report URLs redact session-bearing parameters and fragments", () => {

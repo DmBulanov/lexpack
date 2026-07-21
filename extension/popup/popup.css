@@ -296,14 +296,8 @@ input {
   font-size: 12px;
 }
 
-#resultQuantity[hidden],
 #btnExport[hidden] {
   display: none;
-}
-
-.result-actions #resultQuantity,
-.result-actions #maxItems {
-  margin-bottom: 8px;
 }
 
 .result-actions .btn {

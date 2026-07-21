@@ -3,6 +3,12 @@
 importScripts("../shared/variant-config.js");
 importScripts("../shared/filename.js");
 importScripts("../shared/runtime.js");
+importScripts("../shared/profile-storage.js");
+importScripts("../shared/metadata-parser.js");
+importScripts("../shared/template-engine.js");
+importScripts("../shared/export-plan.js");
+importScripts("../shared/history-storage.js");
+importScripts("../shared/report-schema.js");
 importScripts("export-job.js");
 importScripts("search-flow.js");
 
@@ -10,18 +16,11 @@ const NATIVE_DOWNLOAD_CONFIG = globalThis.LEXPACK_VARIANT?.nativeDownloads;
 if (!NATIVE_DOWNLOAD_CONFIG) {
   throw new Error("LexPack variant configuration is missing");
 }
-const FILE_BACKEND = globalThis.LEXPACK_VARIANT?.fileBackend || "browser-downloads";
-const USE_BROWSER_DOWNLOADS = FILE_BACKEND === "browser-downloads";
-const USE_SAFARI_NATIVE = FILE_BACKEND === "safari-native";
-if (!USE_BROWSER_DOWNLOADS && !USE_SAFARI_NATIVE) {
-  throw new Error(`Unknown LexPack file backend: ${FILE_BACKEND}`);
-}
 
 const JOB_STORAGE_KEY = "exportJob";
 const PROGRESS_STORAGE_KEY = "exportProgress";
 const SEARCH_COLLECTION_STORAGE_KEY = "searchCollection";
 const RESUME_ALARM = "cons-export-resume";
-const SAFARI_DOWNLOADS_BOOKMARK_KEY = "safariDownloadsBookmark";
 const OFFSCREEN_PATH = "offscreen/sanitizer.html";
 const MAX_EXPORT_ITEMS = 200;
 const TAB_TIMEOUT_MS = 45000;
@@ -39,7 +38,6 @@ const CONTENT_SCRIPT_FILES = [
   "shared/variant-config.js",
   "shared/filename.js",
   "shared/runtime.js",
-  "shared/safe-html.js",
   "content/adapters/public-site.js",
   "content/adapters/online-app.js",
   "content/content.js",
@@ -50,7 +48,6 @@ let runnerPromise = null;
 let offscreenCreating = null;
 let jobStartInProgress = false;
 let searchFlowInProgress = false;
-let safariAppPort = null;
 const contentInjectionByTab = new Map();
 const NATIVE_DIAGNOSTIC_RANK = Object.freeze({
   NM_REFERRER: 1,
@@ -177,6 +174,76 @@ async function getDownloadFolder() {
   return folder;
 }
 
+async function readProfileState() {
+  const stored = await chrome.storage.local.get([
+    CONS_PROFILE_STATE_KEY,
+    "lastFormat",
+    "downloadFolder",
+    "settingsSchemaVersion",
+  ]);
+  const state = consMigrateProfileState(
+    stored[CONS_PROFILE_STATE_KEY],
+    stored,
+    Date.now()
+  );
+  if (JSON.stringify(state) !== JSON.stringify(stored[CONS_PROFILE_STATE_KEY])) {
+    await chrome.storage.local.set({ [CONS_PROFILE_STATE_KEY]: state });
+  }
+  return state;
+}
+
+async function persistProfileState(state) {
+  const normalized = consMigrateProfileState(state);
+  await chrome.storage.local.set({ [CONS_PROFILE_STATE_KEY]: normalized });
+  return normalized;
+}
+
+async function readHistoryMode() {
+  const stored = await chrome.storage.local.get(CONS_HISTORY_MODE_KEY);
+  return consNormalizeHistoryMode(stored[CONS_HISTORY_MODE_KEY]);
+}
+
+async function readHistoryState() {
+  const stored = await chrome.storage.local.get(CONS_HISTORY_STORAGE_KEY);
+  return consNormalizeHistoryState(stored[CONS_HISTORY_STORAGE_KEY]);
+}
+
+async function persistHistoryState(state) {
+  const normalized = consNormalizeHistoryState(state);
+  await chrome.storage.local.set({ [CONS_HISTORY_STORAGE_KEY]: normalized });
+  return normalized;
+}
+
+async function recordCompletedJobHistory(job) {
+  if (!job || consIsJobActive(job) || job.historySaved) return;
+  const mode = consNormalizeHistoryMode(job.historyMode);
+  const record = consCreateHistoryRecord(job, mode, {
+    extensionVersion: job.extensionVersion,
+    variant: job.variant,
+  });
+  if (record) {
+    const history = await readHistoryState();
+    await persistHistoryState(consAppendHistoryRecord(history, record));
+  }
+  await mutateJob((draft) => {
+    if (draft.id === job.id) draft.historySaved = true;
+    return draft;
+  });
+}
+
+async function recordCompletedJobHistoryBestEffort(job) {
+  try {
+    await recordCompletedJobHistory(job);
+  } catch (error) {
+    await mutateJob((draft) => {
+      if (draft.id === job?.id) {
+        consAppendJobLog(draft, `История не сохранена: ${errorText(error)}`);
+      }
+      return draft;
+    }).catch(() => {});
+  }
+}
+
 async function setResumeAlarm(active) {
   if (active) {
     await chrome.alarms.create(RESUME_ALARM, { periodInMinutes: 0.5 });
@@ -194,7 +261,6 @@ async function clearResumeAlarmBestEffort() {
 }
 
 async function ensureOffscreenDocument() {
-  if (!USE_BROWSER_DOWNLOADS) return;
   const documentUrl = chrome.runtime.getURL(OFFSCREEN_PATH);
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
@@ -217,7 +283,6 @@ async function ensureOffscreenDocument() {
 }
 
 async function closeOffscreenDocument() {
-  if (!USE_BROWSER_DOWNLOADS) return;
   try {
     const contexts = await chrome.runtime.getContexts({
       contextTypes: ["OFFSCREEN_DOCUMENT"],
@@ -230,9 +295,6 @@ async function closeOffscreenDocument() {
 }
 
 async function offscreenRequest(type, payload = {}) {
-  if (!USE_BROWSER_DOWNLOADS) {
-    throw new Error("Offscreen document is unavailable for this browser");
-  }
   await ensureOffscreenDocument();
   const response = await chrome.runtime.sendMessage({
     target: "offscreen",
@@ -245,12 +307,6 @@ async function offscreenRequest(type, payload = {}) {
 
 async function buildExportBody(doc, format, fallbackUrl = "") {
   if (format === "html") {
-    if (doc?.htmlSanitized === true) {
-      return { body: String(doc.html || ""), mime: "text/html;charset=utf-8" };
-    }
-    if (USE_SAFARI_NATIVE) {
-      throw new Error("Safari не получил безопасно подготовленный HTML документа");
-    }
     const response = await offscreenRequest("SANITIZE_HTML", {
       title: doc?.title || "document",
       html: doc?.html || "",
@@ -281,25 +337,12 @@ async function revokeBlobUrl(url) {
 }
 
 async function downloadGeneratedFile(folder, filename, content, mime) {
-  if (USE_SAFARI_NATIVE) {
-    const response = await safariNativeRequest("SAVE_TEXT_FILE", {
-      folder: consSanitizeFolder(folder),
-      filename,
-      content,
-      mime,
-    });
-    return {
-      downloadId: null,
-      blobUrl: null,
-      completed: true,
-      filename: response.filename || filename,
-    };
-  }
+  const safeDestination = consSafeRelativeDownloadPath(folder, filename);
   const url = await createBlobUrl(content, mime);
   try {
     const downloadId = await chrome.downloads.download({
       url,
-      filename: `${consSanitizeFolder(folder)}/${filename}`,
+      filename: safeDestination.path,
       saveAs: false,
       conflictAction: "uniquify",
     });
@@ -342,14 +385,17 @@ async function suggestedFilenameFor(downloadItem) {
   ) {
     return null;
   }
+  const expectedRelativePath = consSafeRelativeDownloadPath(
+    job.current.expectedRelativeFolder || job.folder,
+    job.current.expectedFilename
+  ).path;
   return {
-    filename: `${consSanitizeFolder(job.folder)}/${job.current.expectedFilename}`,
+    filename: expectedRelativePath,
     conflictAction: "uniquify",
   };
 }
 
 function createCancelGuard(current) {
-  if (!USE_BROWSER_DOWNLOADS) return null;
   if (!current?.downloadKind) return null;
   return {
     ...current,
@@ -360,14 +406,12 @@ function createCancelGuard(current) {
   };
 }
 
-if (USE_BROWSER_DOWNLOADS) {
-  chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-    suggestedFilenameFor(downloadItem)
-      .then((suggestion) => suggest(suggestion || undefined))
-      .catch(() => suggest());
-    return true;
-  });
-}
+chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+  suggestedFilenameFor(downloadItem)
+    .then((suggestion) => suggest(suggestion || undefined))
+    .catch(() => suggest());
+  return true;
+});
 
 async function cancelGuardedDownload(job, downloadItem) {
   const guard = job?.cancelGuard;
@@ -470,15 +514,13 @@ async function attachCreatedDownload(downloadItem) {
   ensureExportRunner();
 }
 
-if (USE_BROWSER_DOWNLOADS) {
-  chrome.downloads.onCreated.addListener((item) => {
-    attachCreatedDownload(item).catch(() => {});
-  });
+chrome.downloads.onCreated.addListener((item) => {
+  attachCreatedDownload(item).catch(() => {});
+});
 
-  chrome.downloads.onChanged.addListener(() => {
-    ensureExportRunner();
-  });
-}
+chrome.downloads.onChanged.addListener(() => {
+  ensureExportRunner();
+});
 
 async function findRecentDownloads(current) {
   const startedAfter = new Date(Number(current.downloadStartedAt || Date.now()) - 2000).toISOString();
@@ -637,8 +679,7 @@ async function ensureContentScripts(tabId) {
 async function sendToTab(tabId, message) {
   try {
     const response = await chrome.tabs.sendMessage(tabId, message);
-    // Safari can resolve with `undefined` while a newly navigated tab has no
-    // content-script receiver yet. Chromium rejects the same call instead.
+    // A newly navigated tab may not have a content-script receiver yet.
     if (response !== undefined && response !== null) return response;
   } catch (error) {
     if (!isMissingContentReceiver(error)) throw error;
@@ -710,7 +751,7 @@ async function updateCurrent(jobId, patch, phase) {
 async function cleanupResources(job, cancelDownload = false) {
   const current = job?.current;
   if (!current) return;
-  if (USE_BROWSER_DOWNLOADS && cancelDownload && current.downloadId != null) {
+  if (cancelDownload && current.downloadId != null) {
     try {
       const [download] = await chrome.downloads.search({ id: current.downloadId });
       if (download?.state === "in_progress") await chrome.downloads.cancel(current.downloadId);
@@ -718,7 +759,6 @@ async function cleanupResources(job, cancelDownload = false) {
       // Best effort cancellation.
     }
   }
-  if (current.nativeToken) await cancelSafariNativeWatch(current.nativeToken);
   if (current.tabId != null) {
     try {
       await chrome.tabs.remove(current.tabId);
@@ -732,21 +772,6 @@ async function cleanupResources(job, cancelDownload = false) {
 async function resumeExistingDownload(job) {
   const current = job.current;
   if (!current?.downloadKind) return null;
-  if (current.downloadKind === "safari-native") {
-    if (!current.nativeToken) {
-      throw new Error("Наблюдение LexPack Safari за загрузкой потеряно");
-    }
-    return waitForSafariNativeDownload(
-      job.id,
-      current.nativeToken,
-      NATIVE_DOWNLOAD_TIMEOUT_MS
-    );
-  }
-  if (USE_SAFARI_NATIVE) {
-    throw new Error(
-      "Safari прервал подтверждение создаваемого файла; повторите экспорт"
-    );
-  }
   const completionTimeout = current.downloadKind === "native"
     ? NATIVE_DOWNLOAD_TIMEOUT_MS
     : DIRECT_DOWNLOAD_TIMEOUT_MS;
@@ -766,128 +791,6 @@ async function resumeExistingDownload(job) {
     completed,
     native: current.downloadKind === "native",
   };
-}
-
-function safariBookmarkFromAppMessage(message) {
-  const queue = [message];
-  const seen = new Set();
-  while (queue.length && seen.size < 24) {
-    const value = queue.shift();
-    if (!value || typeof value !== "object" || seen.has(value)) continue;
-    seen.add(value);
-    if (
-      typeof value.bookmark === "string" &&
-      value.bookmark.length > 0 &&
-      value.bookmark.length <= 1024 * 1024
-    ) {
-      return value.bookmark;
-    }
-    for (const key of ["userInfo", "message", "data", "payload"]) {
-      if (value[key] && typeof value[key] === "object") queue.push(value[key]);
-    }
-  }
-  return "";
-}
-
-function connectSafariAppPort() {
-  if (
-    !USE_SAFARI_NATIVE ||
-    safariAppPort ||
-    typeof chrome.runtime.connectNative !== "function"
-  ) {
-    return;
-  }
-  try {
-    const port = chrome.runtime.connectNative("ru.lexpack.safari");
-    safariAppPort = port;
-    port.onMessage.addListener((message) => {
-      const bookmark = safariBookmarkFromAppMessage(message);
-      if (bookmark) {
-        chrome.storage.local.set({ [SAFARI_DOWNLOADS_BOOKMARK_KEY]: bookmark });
-      }
-    });
-    port.onDisconnect.addListener(() => {
-      if (safariAppPort === port) safariAppPort = null;
-    });
-  } catch {
-    safariAppPort = null;
-  }
-}
-
-async function safariNativeRequest(type, payload = {}) {
-  if (!USE_SAFARI_NATIVE || typeof chrome.runtime.sendNativeMessage !== "function") {
-    throw new Error("Нативный обработчик LexPack Safari недоступен");
-  }
-  connectSafariAppPort();
-  const request = {
-    type,
-    ...payload,
-  };
-  if (!["PING", "CANCEL_DOWNLOAD"].includes(type)) {
-    const stored = await chrome.storage.local.get(SAFARI_DOWNLOADS_BOOKMARK_KEY);
-    const bookmark = stored[SAFARI_DOWNLOADS_BOOKMARK_KEY];
-    if (typeof bookmark !== "string" || !bookmark) {
-      const error = new Error(
-        "Откройте приложение LexPack Safari и выберите папку загрузок Safari"
-      );
-      error.code = "DOWNLOADS_PERMISSION_REQUIRED";
-      throw error;
-    }
-    request.downloadsBookmark = bookmark;
-  }
-  const response = await chrome.runtime.sendNativeMessage("ru.lexpack.safari", request);
-  if (!response?.ok) {
-    const error = new Error(response?.error || `Ошибка LexPack Safari: ${type}`);
-    error.code = response?.code || "SAFARI_NATIVE_ERROR";
-    throw error;
-  }
-  return response;
-}
-
-async function prepareSafariNativeDownload(folder, expectedFilename) {
-  const response = await safariNativeRequest("PREPARE_DOWNLOAD", {
-    folder: consSanitizeFolder(folder),
-    filename: expectedFilename,
-  });
-  if (!response.token) throw new Error("LexPack Safari не создал наблюдение за загрузкой");
-  return response.token;
-}
-
-async function cancelSafariNativeWatch(token) {
-  if (!token || !USE_SAFARI_NATIVE) return;
-  try {
-    await safariNativeRequest("CANCEL_DOWNLOAD", { token });
-  } catch {
-    // The watch expires automatically; cleanup is best effort.
-  }
-}
-
-async function waitForSafariNativeDownload(jobId, token, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await assertJobCanContinue(jobId);
-    const response = await safariNativeRequest("CLAIM_DOWNLOAD", { token });
-    if (response.status === "complete") {
-      return {
-        downloadId: null,
-        filename: response.filename,
-        native: true,
-      };
-    }
-    if (response.status === "ambiguous") {
-      const error = new Error(
-        response.error || "Safari обнаружил несколько подходящих загрузок"
-      );
-      error.code = "SAFARI_DOWNLOAD_AMBIGUOUS";
-      throw error;
-    }
-    await delay(POLL_MS);
-  }
-  const error = unconfirmedDownloadError(
-    "LexPack Safari не подтвердил завершение загрузки; проверьте Safari → Настройки → Сайты → Загрузки (для online.consultant.ru — «Разрешить») и корень выбранной папки загрузок"
-  );
-  error.code = DOWNLOAD_UNCONFIRMED_CODE;
-  throw error;
 }
 
 async function recoverTimedOutNativeDownload(job, graceMs) {
@@ -950,7 +853,20 @@ async function processExportItem(job, itemIndex) {
   const url = consNormalizeDocumentUrl(item.url, job.adapter);
   const capabilities = consGetAdapterCapabilities(job.adapter);
   const isNative = capabilities.nativeFormats.includes(job.format);
-  let expectedFilename = consSafeFilename(item.title, itemIndex + 1, job.format);
+  const expectedDestination = consSafeRelativeDownloadPath(
+    item.plannedRelativeFolder || job.reportRelativeFolder || job.folder,
+    item.plannedFilename ||
+      consSafeFilename(item.title, item.exportIndex || itemIndex + 1, job.format),
+    job.format
+  );
+  const expectedFilename = expectedDestination.filename;
+  const expectedRelativeFolder = expectedDestination.folder;
+  const expectedRelativePath = expectedDestination.path;
+  let sourceExpectedFilename = consSafeFilename(
+    item.title,
+    item.exportIndex || itemIndex + 1,
+    job.format
+  );
 
   const tab = await chrome.tabs.create({ url, active: false });
   await updateCurrent(job.id, { tabId: tab.id }, "loading_tab");
@@ -959,9 +875,9 @@ async function processExportItem(job, itemIndex) {
     await waitTabComplete(tab.id, TAB_TIMEOUT_MS, null, job.id);
     const ready = await waitDocumentReady(tab.id, job.format, job.id);
     if (ready?.documentTitle) {
-      expectedFilename = consSafeFilename(
+      sourceExpectedFilename = consSafeFilename(
         ready.documentTitle,
-        itemIndex + 1,
+        item.exportIndex || itemIndex + 1,
         job.format
       );
     }
@@ -971,18 +887,17 @@ async function processExportItem(job, itemIndex) {
       const settled = await waitForActiveJobDelay(job.id, NATIVE_CONTROL_SETTLE_MS);
       if (!settled) await assertJobCanContinue(job.id);
       const startedAt = Date.now();
-      const nativeToken = USE_SAFARI_NATIVE
-        ? await prepareSafariNativeDownload(job.folder, expectedFilename)
-        : null;
       await updateCurrent(
         job.id,
         {
-          downloadKind: USE_SAFARI_NATIVE ? "safari-native" : "native",
+          downloadKind: "native",
           downloadStartedAt: startedAt,
           expectedFilename,
+          expectedRelativeFolder,
+          expectedRelativePath,
+          sourceExpectedFilename,
           sourceUrl: url,
           extensionId: chrome.runtime.id,
-          nativeToken,
         },
         "triggering_native_download"
       );
@@ -993,13 +908,6 @@ async function processExportItem(job, itemIndex) {
       });
       if (!extracted?.ok || !extracted.doc?.nativeSaveTriggered) {
         throw new Error(extracted?.error || "Сайт не запустил нативное сохранение");
-      }
-      if (USE_SAFARI_NATIVE) {
-        return await waitForSafariNativeDownload(
-          job.id,
-          nativeToken,
-          NATIVE_DOWNLOAD_TIMEOUT_MS
-        );
       }
       const downloadId = await waitForCurrentDownloadId(
         job.id,
@@ -1020,7 +928,6 @@ async function processExportItem(job, itemIndex) {
     const extracted = await sendToTab(tab.id, {
       type: "EXTRACT_DOCUMENT",
       format: job.format,
-      sanitizeHtml: USE_SAFARI_NATIVE && job.format === "html",
     });
     if (!extracted?.ok || !extracted.doc) {
       throw new Error(extracted?.error || "Не удалось извлечь документ");
@@ -1038,17 +945,18 @@ async function processExportItem(job, itemIndex) {
         downloadKind: "direct",
         downloadStartedAt: startedAt,
         expectedFilename,
+        expectedRelativeFolder,
+        expectedRelativePath,
       },
       "starting_download"
     );
     await assertJobCanContinue(job.id);
-    const download = await downloadGeneratedFile(job.folder, expectedFilename, body, mime);
-    if (download.completed) {
-      return {
-        downloadId: null,
-        filename: download.filename || expectedFilename,
-      };
-    }
+    const download = await downloadGeneratedFile(
+      expectedRelativeFolder,
+      expectedFilename,
+      body,
+      mime
+    );
     await updateCurrent(
       job.id,
       { downloadId: download.downloadId, blobUrl: download.blobUrl },
@@ -1077,41 +985,12 @@ function reportFilename(job) {
 }
 
 function serializeJobReport(job) {
-  const progress = consJobProgress(job);
   return JSON.stringify(
-    {
-      schemaVersion: 2,
-      jobId: job.id,
-      query: job.query,
-      scope: job.scope,
-      adapter: job.adapter,
-      format: job.format,
-      startedAt: job.startedAt,
-      generatedAt: new Date().toISOString(),
-      summary: {
-        status: progress.failed
-          ? "completed_with_errors"
-          : progress.unconfirmed
-            ? "completed_with_unconfirmed"
-            : "completed",
-        total: progress.total,
-        processed: progress.current,
-        completed: progress.completed,
-        unconfirmed: progress.unconfirmed,
-        failed: progress.failed,
-        stopped: progress.stopped,
-      },
-      items: job.items.map((item) => ({
-        index: item.index,
-        title: item.title,
-        instance: item.instance,
-        instanceLabel: item.instanceLabel,
-        sourceUrl: consProvenanceUrl(item.url),
-        status: item.status,
-        filename: item.filename,
-        error: item.error,
-      })),
-    },
+    consBuildReportV2(job, {
+      extensionVersion:
+        chrome.runtime.getManifest().version_name || chrome.runtime.getManifest().version,
+      variant: globalThis.LEXPACK_VARIANT?.id || "unknown",
+    }),
     null,
     2
   );
@@ -1127,12 +1006,19 @@ async function saveJobReport(job) {
   const startedAt = Date.now();
   await mutateJob((draft) => {
     draft.phase = "saving_report";
+    const reportDestination = consSafeRelativeDownloadPath(
+      draft.reportRelativeFolder || draft.folder,
+      filename,
+      "json"
+    );
     draft.current = {
       itemIndex: -1,
       tabId: null,
       downloadId: null,
       blobUrl: null,
-      expectedFilename: filename,
+      expectedFilename: reportDestination.filename,
+      expectedRelativeFolder: reportDestination.folder,
+      expectedRelativePath: reportDestination.path,
       downloadKind: "report",
       downloadStartedAt: startedAt,
     };
@@ -1140,17 +1026,11 @@ async function saveJobReport(job) {
   });
   await assertJobCanContinue(job.id);
   const download = await downloadGeneratedFile(
-    job.folder,
+    consSanitizeFolder(job.reportRelativeFolder || job.folder),
     filename,
     serializeJobReport(await readJob()),
     "application/json;charset=utf-8"
   );
-  if (download.completed) {
-    return {
-      filename: download.filename || filename,
-      downloadId: null,
-    };
-  }
   await updateCurrent(job.id, {
     downloadId: download.downloadId,
     blobUrl: download.blobUrl,
@@ -1225,7 +1105,7 @@ async function stopCurrentWork(job) {
     });
   }
   await cleanupResources(job, true);
-  await mutateJob((draft) => {
+  const stoppedJob = await mutateJob((draft) => {
     if (draft.current?.itemIndex >= 0) {
       consMarkItemFinished(draft, draft.current.itemIndex, "stopped", {
         error: "Остановлено пользователем",
@@ -1236,6 +1116,7 @@ async function stopCurrentWork(job) {
     consAppendJobLog(draft, "Остановлено пользователем");
     return consFinishJob(draft, "stopped");
   });
+  await recordCompletedJobHistoryBestEffort(stoppedJob);
   await clearResumeAlarmBestEffort();
   await closeOffscreenDocument();
 }
@@ -1280,7 +1161,7 @@ async function runStoredJob() {
         await stopCurrentWork(latest);
         return;
       }
-      await mutateJob((draft) => {
+      const finishedJob = await mutateJob((draft) => {
         const progress = consJobProgress(draft);
         const unconfirmed = progress.unconfirmed
           ? `; требует проверки: ${progress.unconfirmed}`
@@ -1291,6 +1172,7 @@ async function runStoredJob() {
         );
         return consFinishJob(draft, "done");
       });
+      await recordCompletedJobHistoryBestEffort(finishedJob);
       await clearResumeAlarmBestEffort();
       await closeOffscreenDocument();
       return;
@@ -1417,11 +1299,12 @@ function ensureExportRunner() {
   runnerPromise = runStoredJob()
     .catch(async (error) => {
       try {
-        await mutateJob((job) => {
+        const failedJob = await mutateJob((job) => {
           job.lastError = errorText(error);
           consAppendJobLog(job, `FATAL ${errorText(error)}`);
           return consFinishJob(job, "failed");
         });
+        await recordCompletedJobHistoryBestEffort(failedJob);
         await clearResumeAlarmBestEffort();
       } catch {
         // Nothing else can be persisted if storage itself failed.
@@ -1545,23 +1428,81 @@ async function startExportJob(options) {
       throw new Error("Дождитесь завершения отмены предыдущей загрузки");
     }
 
-    const adapter = inferAdapter(options.items, options.adapter);
-    const format = consAssertFormatSupported(adapter, options.format || "docx");
-    const items = normalizeItems(options.items, adapter, options.maxItems);
-    const folder = await getDownloadFolder();
+    let plan;
+    let truncated = false;
+    if (options.plan) {
+      plan = consRebuildExportPlan(options.plan);
+      if (!plan.ok) {
+        const error = new Error(plan.errors[0]?.message || "Некорректный план выгрузки");
+        error.code = plan.errors[0]?.code || "INVALID_EXPORT_PLAN";
+        throw error;
+      }
+    } else {
+      const adapter = inferAdapter(options.items, options.adapter);
+      const format = consAssertFormatSupported(adapter, options.format || "docx");
+      const normalizedItems = normalizeItems(options.items, adapter, options.maxItems);
+      const profileState = await readProfileState();
+      const selectedProfile = consGetSelectedProfile(profileState);
+      const legacyProfile = consNormalizeProfile(
+        {
+          ...selectedProfile,
+          format,
+          folderTemplate: await getDownloadFolder(),
+        },
+        { builtIn: selectedProfile.id === CONS_DEFAULT_PROFILE_ID }
+      );
+      plan = consBuildExportPlan({
+        adapter,
+        query: options.query,
+        collection: {
+          source: "current-list",
+          scope: options.scope,
+          total: normalizedItems.length,
+          totalKnown: true,
+        },
+        items: normalizedItems,
+        profile: legacyProfile,
+      });
+      if (!plan.ok) throw new Error(plan.errors[0]?.message || "Не удалось построить план");
+      truncated = normalizedItems.length < options.items.length;
+    }
+
+    const adapter = inferAdapter(
+      plan.items.map((item) => ({ url: item.sourceUrl })),
+      plan.adapter
+    );
+    const format = consAssertFormatSupported(adapter, plan.format);
+    const items = plan.items.map((item) => ({
+      ...item,
+      sourceUrl: consNormalizeDocumentUrl(item.sourceUrl, adapter),
+      url: consNormalizeDocumentUrl(item.sourceUrl, adapter),
+    }));
+    if (!items.length || items.length > MAX_EXPORT_ITEMS) {
+      throw new Error("План должен содержать от 1 до 200 документов");
+    }
+    const historyMode = await readHistoryMode();
+    const manifest = chrome.runtime.getManifest();
     const id = globalThis.crypto?.randomUUID?.() || `job-${Date.now()}`;
     const job = consCreateExportJob({
       id,
       adapter,
       format,
       items,
-      folder,
-      query: options.query,
-      scope: options.scope,
+      folder: plan.reportRelativeFolder,
+      reportRelativeFolder: plan.reportRelativeFolder,
+      query: plan.query,
+      scope: plan.collection?.scope || options.scope,
+      profileSnapshot: plan.profileSnapshot,
+      collection: plan.collection,
+      selectedCount: plan.selectedCount,
+      historyMode,
+      extensionVersion: manifest.version_name || manifest.version,
+      variant: globalThis.LEXPACK_VARIANT?.id || "unknown",
+      reportQueryIncluded: historyMode === "detailed",
       reportEnabled: options.reportEnabled,
     });
     consAppendJobLog(job, `Старт: ${items.length} док. → .${format}`);
-    if (items.length < options.items.length) {
+    if (truncated) {
       consAppendJobLog(job, `Применён лимит: ${items.length} из ${options.items.length}`);
     }
     await replaceJob(job);
@@ -1577,7 +1518,7 @@ async function startExportJob(options) {
       throw error;
     }
     ensureExportRunner();
-    return { job, truncated: items.length < options.items.length };
+    return { job, truncated };
   } finally {
     jobStartInProgress = false;
   }
@@ -2044,7 +1985,7 @@ async function startCurrentExport(message) {
     format: message.format,
     maxItems: 1,
     reportEnabled: false,
-    items: [{ index: 1, title: tab.title || "document", url: tab.url }],
+    items: [{ index: 1, title: ping.documentTitle || tab.title || "document", url: tab.url }],
   });
 }
 
@@ -2058,7 +1999,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  connectSafariAppPort();
   ensureExportRunner();
 });
 
@@ -2121,6 +2061,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
       }
 
+      case "START_PLANNED_EXPORT": {
+        const started = await startExportJob({ plan: message.plan });
+        return {
+          ok: true,
+          started: true,
+          total: started.job.items.length,
+          jobId: started.job.id,
+          truncated: false,
+        };
+      }
+
       case "START_CURRENT_EXPORT": {
         const started = await startCurrentExport(message);
         return { ok: true, started: true, total: 1, jobId: started.job.id };
@@ -2145,13 +2096,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             body,
             mime
           );
-          if (download.completed) {
-            return {
-              ok: true,
-              filename: download.filename || filename,
-              downloadId: null,
-            };
-          }
           await waitForDownloadCompletion(
             "standalone",
             download.downloadId,
@@ -2184,6 +2128,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
       }
 
+      case "GET_PLANNER_CONTEXT": {
+        const [collection, profileState, historyMode, history, job] = await Promise.all([
+          readSearchCollection(),
+          readProfileState(),
+          readHistoryMode(),
+          readHistoryState(),
+          readJob(),
+        ]);
+        return {
+          ok: true,
+          collection: collection?.status === "ready" ? collection : null,
+          profileState,
+          historyMode,
+          history,
+          progress: consJobProgress(job),
+          running: consIsJobActive(job),
+        };
+      }
+
       case "CACHE_SEARCH_COLLECTION": {
         const tab = Number.isInteger(message.tabId)
           ? await chrome.tabs.get(message.tabId)
@@ -2208,7 +2171,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case "GET_SETTINGS":
-        return { ok: true, downloadFolder: await getDownloadFolder() };
+        return {
+          ok: true,
+          downloadFolder: await getDownloadFolder(),
+          profileState: await readProfileState(),
+          historyMode: await readHistoryMode(),
+        };
+
+      case "PUT_EXPORT_PROFILE": {
+        const state = await readProfileState();
+        const next = consUpsertProfileState(state, message.profile);
+        await persistProfileState(next);
+        const saved = next.profiles.find((profile) => profile.id === next.selectedProfileId);
+        if (saved?.id === CONS_DEFAULT_PROFILE_ID) {
+          await chrome.storage.local.set({
+            lastFormat: saved.format,
+            downloadFolder: consSanitizeFolder(saved.folderTemplate),
+          });
+        }
+        return { ok: true, profileState: next };
+      }
+
+      case "SELECT_EXPORT_PROFILE": {
+        const next = consSelectProfileState(await readProfileState(), message.profileId);
+        await persistProfileState(next);
+        return { ok: true, profileState: next };
+      }
+
+      case "DELETE_EXPORT_PROFILE": {
+        const next = consDeleteProfileState(await readProfileState(), message.profileId);
+        await persistProfileState(next);
+        return { ok: true, profileState: next };
+      }
+
+      case "UPDATE_DEFAULT_PROFILE_SETTINGS": {
+        const state = await readProfileState();
+        const currentSelection = state.selectedProfileId;
+        const builtIn = state.profiles.find((profile) => profile.id === CONS_DEFAULT_PROFILE_ID);
+        const next = consUpsertProfileState(state, {
+          ...builtIn,
+          format: message.format || builtIn.format,
+          folderTemplate: consSanitizeFolder(message.folderTemplate || builtIn.folderTemplate),
+        });
+        next.selectedProfileId = currentSelection;
+        await persistProfileState(next);
+        return { ok: true, profileState: next };
+      }
+
+      case "SET_HISTORY_MODE": {
+        const mode = consNormalizeHistoryMode(message.mode);
+        await chrome.storage.local.set({ [CONS_HISTORY_MODE_KEY]: mode });
+        return { ok: true, mode };
+      }
+
+      case "DELETE_HISTORY_RECORD": {
+        const next = consDeleteHistoryRecord(await readHistoryState(), message.id);
+        await persistHistoryState(next);
+        return { ok: true, history: next };
+      }
+
+      case "CLEAR_HISTORY": {
+        const next = { schemaVersion: CONS_HISTORY_SCHEMA_VERSION, records: [] };
+        await persistHistoryState(next);
+        return { ok: true, history: next };
+      }
 
       case "CLEAR_LOCAL_DATA":
         {
@@ -2229,7 +2255,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "maxItems",
           "lastInstances",
           "settingsSchemaVersion",
-          SAFARI_DOWNLOADS_BOOKMARK_KEY,
+          CONS_PROFILE_STATE_KEY,
+          CONS_HISTORY_MODE_KEY,
+          CONS_HISTORY_STORAGE_KEY,
         ]);
         await chrome.storage.session.remove([
           JOB_STORAGE_KEY,
@@ -2249,8 +2277,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-connectSafariAppPort();
-
 readJob()
   .then(async (job) => {
     if (consIsJobActive(job)) {
@@ -2261,6 +2287,7 @@ readJob()
       }
       ensureExportRunner();
     } else {
+      await recordCompletedJobHistoryBestEffort(job);
       await clearResumeAlarmBestEffort();
     }
   })

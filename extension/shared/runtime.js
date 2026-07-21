@@ -1,5 +1,9 @@
 /** Shared runtime contracts for popup, content scripts, and the service worker. */
 (function () {
+  const filenameApi =
+    typeof module !== "undefined" && module.exports
+      ? require("./filename.js")
+      : globalThis;
   const NATIVE_DOWNLOAD_MATCH_WINDOW_MS = Number(
     globalThis.LEXPACK_VARIANT?.nativeDownloads?.matchWindowMs || 35000
   );
@@ -210,14 +214,7 @@
   }
 
   function consSanitizePathSegment(segment) {
-    let value = String(segment || "")
-      .replace(/[<>:"|?*\u0000-\u001f]/g, "_")
-      .replace(/[. ]+$/g, "")
-      .trim()
-      .slice(0, 80);
-    if (!value || value === "." || value === "..") return "";
-    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value)) value = `_${value}`;
-    return value;
+    return filenameApi.consSanitizePathSegment(segment);
   }
 
   function consSanitizeFolder(rawFolder) {
@@ -229,6 +226,16 @@
       .filter(Boolean)
       .slice(0, 5);
     return segments.join("/") || CONS_DEFAULT_DOWNLOAD_FOLDER;
+  }
+
+  function consSafeRelativeDownloadPath(rawFolder, rawFilename, fallbackExtension = "txt") {
+    const folder = consSanitizeFolder(rawFolder);
+    const filename = filenameApi.consSafeDownloadFilename(rawFilename, fallbackExtension);
+    return {
+      folder,
+      filename,
+      path: `${folder}/${filename}`,
+    };
   }
 
   function consMigrateStoredDownloadFolder(rawFolder, schemaVersion = 0) {
@@ -377,7 +384,10 @@
         consBlobDownloadMatchesSource(candidate, source)
       );
       if (!sourceBlob) return nativeDecision(false, true, "NM_ORIGIN");
-      return consNativeFilenameMatches(item.filename, current.expectedFilename)
+      return consNativeFilenameMatches(
+        item.filename,
+        current.sourceExpectedFilename || current.expectedFilename
+      )
         ? nativeDecision(true, true, "NM_FILENAME_FALLBACK")
         : nativeDecision(false, true, "NM_FILENAME");
     }
@@ -483,6 +493,7 @@
     consSanitizeDownloadDiagnostics,
     consSanitizePageProbe,
     consSanitizeFolder,
+    consSafeRelativeDownloadPath,
     consMigrateStoredDownloadFolder,
   };
   Object.assign(globalThis, api);

@@ -261,21 +261,18 @@ test("online all-scope still opens full results and deduplicates selected instan
   assert.match(resultLog, /Постановление окружного суда 1/);
   assert.match(resultLog, /Постановление окружного суда 2/);
   assert.doesNotMatch(resultLog, /НЕ СУДЕБНЫЙ|краткая практика|PRE-SCOPE/);
-  assert.equal(await popup.locator("#maxItems").inputValue(), "4");
-  assert.equal(await popup.locator("#maxItems").getAttribute("max"), "4");
-  assert.equal(await popup.locator("#btnExport").innerText(), "Скачать 4 документа");
+  assert.equal(await popup.locator("#maxItems").count(), 0);
+  assert.equal(await popup.locator("#btnExport").innerText(), "Настроить выгрузку · 4");
   assert.equal(await popup.locator("#searchPanel").getAttribute("open"), null);
   assert.equal(await popup.locator("#searchSummary").innerText(), "Найти другую практику");
-  await popup.locator("#maxItems").fill("3");
-  assert.equal(await popup.locator("#btnExport").innerText(), "Скачать 3 документа");
 
   await popup.reload();
   await popup.waitForFunction(
-    () => document.querySelector("#btnExport")?.textContent?.includes("4 документа"),
+    () => document.querySelector("#btnExport")?.textContent?.includes("· 4"),
     undefined,
     { timeout: 10000 }
   );
-  assert.equal(await popup.locator("#maxItems").inputValue(), "4");
+  assert.equal(await popup.locator("#maxItems").count(), 0);
   assert.match(await popup.locator("#log").innerText(), /Постановление окружного суда 2/);
 
   const searchRequests = requests.filter((entry) =>
@@ -294,6 +291,13 @@ test("online all-scope still opens full results and deduplicates selected instan
   );
   assert.equal(await consultant.evaluate(() => window.name), "");
   assert.equal(consultant.url(), SEARCH_URL);
+
+  const plannerPromise = context.waitForEvent("page");
+  await popup.locator("#btnExport").click();
+  const planner = await plannerPromise;
+  await planner.locator("#documentRows tr").nth(3).waitFor();
+  assert.equal(await planner.locator("#documentRows tr").count(), 4);
+  assert.match(await planner.locator("#selectedCount").innerText(), /4 из 4/);
 });
 
 test("manual collection harvests the whole virtualized category selected by the user", async (t) => {
@@ -366,9 +370,9 @@ test("manual collection harvests the whole virtualized category selected by the 
   await page.bringToFront();
   await popup.reload();
   await popup.waitForFunction(
-    () => document.querySelector("#maxItems")?.value === "65",
+    () => document.querySelector("#btnExport")?.textContent?.includes("· 65"),
     undefined,
-    { timeout: 15000 }
+    { timeout: 20000 }
   );
   assert.equal(await popup.locator("#query").inputValue(), "");
   assert.equal(await popup.locator("#query").isVisible(), false);
@@ -376,8 +380,8 @@ test("manual collection harvests the whole virtualized category selected by the 
   assert.equal(await popup.locator("#searchSummary").innerText(), "Найти другую практику");
   assert.equal(await popup.locator("#resultTitle").innerText(), "Открытая подборка");
   assert.equal(await popup.locator("#resultActions").isVisible(), true);
-  assert.equal(await popup.locator("#maxItems").getAttribute("max"), "65");
-  assert.equal(await popup.locator("#btnExport").innerText(), "Скачать 65 документов");
+  assert.equal(await popup.locator("#maxItems").count(), 0);
+  assert.equal(await popup.locator("#btnExport").innerText(), "Настроить выгрузку · 65");
   assert.equal(await popup.locator("#btnExport").isEnabled(), true);
   const downloadButtonRect = await popup.locator("#btnExport").boundingBox();
   assert.ok(downloadButtonRect, "download button must be rendered");
@@ -394,6 +398,13 @@ test("manual collection harvests the whole virtualized category selected by the 
   assert.equal(limited.truncatedByLimit, true);
   assert.equal(limited.incomplete, false);
   assert.equal(await page.locator(".x-page-search-results__list").evaluate((node) => node.scrollTop), 0);
+
+  const plannerPromise = context.waitForEvent("page");
+  await popup.locator("#btnExport").click();
+  const planner = await plannerPromise;
+  await planner.locator("#documentRows tr").nth(64).waitFor();
+  assert.equal(await planner.locator("#documentRows tr").count(), 65);
+  assert.match(await planner.locator("#selectedCount").innerText(), /65 из 65/);
 });
 
 test("a non-judicial full-results category is explained instead of exported", async (t) => {

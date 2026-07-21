@@ -13,9 +13,6 @@ const els = {
   format: document.getElementById("format"),
   downloadFolder: document.getElementById("downloadFolder"),
   folderPreview: document.getElementById("folderPreview"),
-  safariFolderPreview: document.getElementById("safariFolderPreview"),
-  browserDownloadsHelp: document.getElementById("browserDownloadsHelp"),
-  safariDownloadsHelp: document.getElementById("safariDownloadsHelp"),
   btnOpenDownloadsSettings: document.getElementById("btnOpenDownloadsSettings"),
   searchPanel: document.getElementById("searchPanel"),
   searchSummary: document.getElementById("searchSummary"),
@@ -25,9 +22,7 @@ const els = {
   instanceInputs: [...document.querySelectorAll("input[name='instance']")],
   resultActions: document.getElementById("resultActions"),
   resultTitle: document.getElementById("resultTitle"),
-  resultQuantity: document.getElementById("resultQuantity"),
   foundSummary: document.getElementById("foundSummary"),
-  maxItems: document.getElementById("maxItems"),
   btnFind: document.getElementById("btnFind"),
   contextActions: document.getElementById("contextActions"),
   btnExport: document.getElementById("btnExport"),
@@ -43,17 +38,12 @@ const els = {
   log: document.getElementById("log"),
 };
 
-const usesSafariNativeFiles = activeVariant.fileBackend === "safari-native";
-els.browserDownloadsHelp.hidden = usesSafariNativeFiles;
-els.safariDownloadsHelp.hidden = !usesSafariNativeFiles;
-els.btnOpenDownloadsSettings.hidden = usesSafariNativeFiles;
-if (!usesSafariNativeFiles && activeVariant.downloadsHelp?.settingsLabel) {
+if (activeVariant.downloadsHelp?.settingsLabel) {
   els.btnOpenDownloadsSettings.textContent = activeVariant.downloadsHelp.settingsLabel;
 }
 
 function updateFolderPreviews(folder) {
   els.folderPreview.textContent = folder;
-  els.safariFolderPreview.textContent = folder;
 }
 
 const STATUS_LABELS = {
@@ -178,8 +168,7 @@ function setProgressInfo(messages = []) {
 async function sendMessage(message) {
   try {
     let response = await chrome.runtime.sendMessage(message);
-    // Safari may wake an unloaded MV3 service worker asynchronously and resolve
-    // the first message before its listener is ready. Retry the cold start once.
+    // Retry once while an unloaded MV3 service worker is starting.
     if (response === undefined || response === null) {
       await new Promise((resolve) => setTimeout(resolve, 150));
       response = await chrome.runtime.sendMessage(message);
@@ -198,31 +187,11 @@ function setLog(message) {
   els.log.textContent = String(message || "");
 }
 
-function maxItemsValue() {
+function updatePlannerButton() {
   const available = Math.min(200, cachedItems.length);
-  if (!available) return 0;
-  const value = Number.parseInt(els.maxItems.value, 10);
-  return Number.isInteger(value) && value > 0
-    ? Math.min(available, value)
-    : 0;
-}
-
-function documentWord(count) {
-  const value = Math.abs(Number(count) || 0) % 100;
-  const tail = value % 10;
-  if (value >= 11 && value <= 14) return "документов";
-  if (tail === 1) return "документ";
-  if (tail >= 2 && tail <= 4) return "документа";
-  return "документов";
-}
-
-function updateDownloadSelection() {
-  const available = Math.min(200, cachedItems.length);
-  els.maxItems.max = String(Math.max(1, available));
-  const selected = maxItemsValue();
-  els.btnExport.textContent = selected
-    ? `Скачать ${selected} ${documentWord(selected)}`
-    : "Скачать документы";
+  els.btnExport.textContent = available
+    ? `Настроить выгрузку · ${available}`
+    : "Настроить выгрузку";
 }
 
 function collectionSummary(meta = {}) {
@@ -248,7 +217,7 @@ function invalidateCollection() {
   collectionSource = "";
   collectionStatus = "idle";
   collectionMessage = "";
-  updateDownloadSelection();
+  updatePlannerButton();
   updateActionState();
 }
 
@@ -314,17 +283,14 @@ function updateActionState() {
     ? collectionSummary(collectionMeta)
     : collectionMessage;
   els.resultActions.hidden = collectionStatus === "idle";
-  els.resultQuantity.hidden = !hasDownloadableCollection;
   els.btnExport.hidden = !hasDownloadableCollection && !retryableCollection;
   if (retryableCollection) els.btnExport.textContent = "Повторить чтение";
-  else updateDownloadSelection();
+  else updatePlannerButton();
   els.btnOne.hidden = !documentPage;
   els.btnExport.disabled =
     exportRunning ||
     actionPending ||
-    (!retryableCollection &&
-      (!formatSupported || !hasDownloadableCollection || maxItemsValue() === 0));
-  els.maxItems.disabled = exportRunning || actionPending || !hasDownloadableCollection;
+    (!retryableCollection && !hasDownloadableCollection);
   els.btnOne.disabled =
     exportRunning || actionPending || currentPage !== "document" || !formatSupported;
   const instancesReady =
@@ -449,8 +415,7 @@ function applyItems(items, meta = {}) {
   if (!cachedItems.length) {
     els.log.textContent = collectionMessage;
   }
-  els.maxItems.value = String(Math.max(1, cachedItems.length));
-  updateDownloadSelection();
+  updatePlannerButton();
   updateActionState();
 }
 
@@ -464,6 +429,11 @@ async function storeSettings() {
     settingsSchemaVersion: CONS_SETTINGS_SCHEMA_VERSION,
   };
   await chrome.storage.local.set(settings);
+  await sendMessage({
+    type: "UPDATE_DEFAULT_PROFILE_SETTINGS",
+    format: settings.lastFormat,
+    folderTemplate: settings.downloadFolder,
+  });
   els.downloadFolder.value = folder;
   updateFolderPreviews(folder);
 }
@@ -773,38 +743,6 @@ async function runFind() {
   }
 }
 
-async function exportCachedItems() {
-  if (actionPending || exportRunning) return;
-  actionPending = true;
-  updateActionState();
-  try {
-    if (!collectionReady || !cachedItems.length) return;
-    await storeSettings();
-    const response = await sendMessage({
-      type: "START_TAB_EXPORT",
-      adapter: currentAdapter,
-      items: cachedItems,
-      format: els.format.value,
-      maxItems: maxItemsValue(),
-      query: cachedQuery,
-      scope: cachedScope,
-    });
-    if (!response?.ok) {
-      setLog(response?.error || "Не удалось запустить экспорт");
-      return;
-    }
-    exportRunning = true;
-    setProgressInfo();
-    els.progressText.textContent = `скачиваем ${response.total} док.`;
-    pollWhileRunning();
-  } catch (error) {
-    setLog(String(error?.message || error));
-  } finally {
-    actionPending = false;
-    updateActionState();
-  }
-}
-
 async function exportCurrentDocument() {
   if (actionPending || exportRunning) return;
   actionPending = true;
@@ -849,9 +787,25 @@ function pollWhileRunning() {
   }, 750);
 }
 
+async function openPlanner() {
+  if (actionPending || exportRunning || !collectionReady || !cachedItems.length) return;
+  actionPending = true;
+  updateActionState();
+  try {
+    await storeSettings();
+    await chrome.tabs.create({ url: chrome.runtime.getURL("planner/planner.html") });
+    window.close();
+  } catch (error) {
+    setLog(String(error?.message || error));
+  } finally {
+    actionPending = false;
+    updateActionState();
+  }
+}
+
 async function handleCollectionButton() {
   if (collectionStatus !== "error") {
-    await exportCachedItems();
+    await openPlanner();
     return;
   }
   if (actionPending || exportRunning) return;
@@ -879,12 +833,6 @@ els.query.addEventListener("keydown", (event) => {
     runFind();
   }
 });
-els.maxItems.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-    event.preventDefault();
-    exportCachedItems();
-  }
-});
 els.query.addEventListener("input", () => {
   if (
     collectionSource === "search" &&
@@ -909,15 +857,6 @@ for (const input of els.instanceInputs) {
     storeSettings();
   });
 }
-els.maxItems.addEventListener("input", () => {
-  updateDownloadSelection();
-  updateActionState();
-});
-els.maxItems.addEventListener("change", () => {
-  els.maxItems.value = String(maxItemsValue() || Math.min(200, cachedItems.length) || 1);
-  updateDownloadSelection();
-  updateActionState();
-});
 els.btnOpenDownloadsSettings.addEventListener("click", () => {
   const settingsUrl = activeVariant.downloadsHelp?.settingsUrl;
   if (!settingsUrl) return;

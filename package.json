@@ -1,8 +1,8 @@
 {
   "name": "lexpack",
-  "version": "0.8.4",
+  "version": "0.9.0",
   "private": true,
-  "description": "Controlled Chrome, Chromium-Gost, and Safari builds of LexPack.",
+  "description": "Controlled Chrome and Chromium-Gost builds of LexPack.",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=20"
@@ -14,8 +14,6 @@
     "build": "node scripts/build.mjs all",
     "build:chrome": "node scripts/build.mjs chrome",
     "build:gost": "node scripts/build.mjs chromium-gost",
-    "build:safari": "node scripts/build.mjs safari",
-    "build:safari-app": "node scripts/build-safari-app.mjs",
     "check:syntax": "find extension scripts test -type f \\( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \\) -print0 | xargs -0 -n1 node --check",
     "check:manifest": "npm run build && node scripts/check-builds.mjs all",
     "test:unit": "node --test test/*.test.cjs",

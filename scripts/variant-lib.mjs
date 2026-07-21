@@ -9,7 +9,7 @@ export const EXTENSION_ROOT = path.join(ROOT, "extension");
 export const VARIANTS_ROOT = path.join(ROOT, "variants");
 export const BUILD_ROOT = path.join(ROOT, "build");
 export const DIST_ROOT = path.join(ROOT, "dist");
-export const VARIANT_IDS = Object.freeze(["chrome", "chromium-gost", "safari"]);
+export const VARIANT_IDS = Object.freeze(["chrome", "chromium-gost"]);
 export const PACKAGE_VARIANT_IDS = Object.freeze(["chrome", "chromium-gost"]);
 
 async function readJson(file) {
@@ -65,15 +65,10 @@ export async function loadVariant(id) {
     requireText(value, `${id}.${label}`);
   }
 
-  if (!["browser-downloads", "safari-native"].includes(config.fileBackend)) {
-    throw new Error(`${id}.fileBackend must be browser-downloads or safari-native`);
-  }
-  if (config.fileBackend === "browser-downloads") {
-    requireText(
-      config.manifest?.minimumChromeVersion,
-      `${id}.manifest.minimumChromeVersion`
-    );
-  }
+  requireText(
+    config.manifest?.minimumChromeVersion,
+    `${id}.manifest.minimumChromeVersion`
+  );
 
   if (!/^\d+(?:\.\d+){0,3}$/.test(config.manifest.version)) {
     throw new Error(`${id}.manifest.version must use Chromium's numeric version format`);
@@ -111,7 +106,6 @@ export function publicVariantConfig(config) {
     browserLabel: config.browserLabel,
     popupTitle: config.popup.title,
     popupBrand: config.popup.brand,
-    fileBackend: config.fileBackend,
     downloadsHelp: config.downloadsHelp || {},
     nativeDownloads: config.nativeDownloads,
   };
@@ -123,38 +117,23 @@ function variantScript(config) {
 }
 
 function buildManifest(base, config) {
-  const safariNative = config.fileBackend === "safari-native";
-  const permissions = safariNative
-    ? [...base.permissions.filter((permission) => !["downloads", "offscreen"].includes(permission)), "nativeMessaging"]
-    : base.permissions;
-  const contentScripts = base.content_scripts.map((entry) => ({
-    ...entry,
-    js: safariNative
-      ? entry.js.flatMap((file) =>
-          file === "shared/runtime.js" ? [file, "shared/safe-html.js"] : [file]
-        )
-      : entry.js,
-  }));
-  const manifest = {
+  return {
     manifest_version: base.manifest_version,
     name: config.manifest.name,
     version: config.manifest.version,
     version_name: config.manifest.versionName,
     description: config.manifest.description,
-    permissions,
+    permissions: base.permissions,
     host_permissions: base.host_permissions,
     action: {
       ...base.action,
       default_title: config.manifest.actionTitle,
     },
     background: base.background,
-    content_scripts: contentScripts,
+    content_scripts: base.content_scripts,
     icons: base.icons,
+    minimum_chrome_version: config.manifest.minimumChromeVersion,
   };
-  if (!safariNative) {
-    manifest.minimum_chrome_version = config.manifest.minimumChromeVersion;
-  }
-  return manifest;
 }
 
 export async function buildVariant(id) {
@@ -217,29 +196,13 @@ export async function checkBuiltVariant(id) {
     version: config.manifest.version,
     version_name: config.manifest.versionName,
   };
-  if (config.fileBackend === "browser-downloads") {
-    expected.minimum_chrome_version = config.manifest.minimumChromeVersion;
-  }
+  expected.minimum_chrome_version = config.manifest.minimumChromeVersion;
   for (const [key, value] of Object.entries(expected)) {
     if (manifest[key] !== value) {
       throw new Error(`${id}: manifest.${key} is ${JSON.stringify(manifest[key])}, expected ${JSON.stringify(value)}`);
     }
   }
   if (manifest.manifest_version !== 3) throw new Error(`${id}: manifest_version must be 3`);
-  if (config.fileBackend === "safari-native") {
-    if (manifest.minimum_chrome_version !== undefined) {
-      throw new Error(`${id}: Safari manifest must not declare minimum_chrome_version`);
-    }
-    if (manifest.permissions.includes("downloads") || manifest.permissions.includes("offscreen")) {
-      throw new Error(`${id}: Safari manifest contains Chromium-only permissions`);
-    }
-    if (!manifest.permissions.includes("nativeMessaging")) {
-      throw new Error(`${id}: Safari manifest must declare nativeMessaging`);
-    }
-    if (!manifest.content_scripts?.[0]?.js?.includes("shared/safe-html.js")) {
-      throw new Error(`${id}: Safari content scripts must provide DOM sanitization`);
-    }
-  }
   if (!manifest.content_scripts?.[0]?.js?.includes("shared/variant-config.js")) {
     throw new Error(`${id}: variant config must load before shared runtime code`);
   }

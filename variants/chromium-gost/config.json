@@ -1,17 +1,16 @@
 {
   "id": "chromium-gost",
   "browserLabel": "Chromium-Gost",
-  "fileBackend": "browser-downloads",
   "downloadsHelp": {
     "description": "Расширение предлагает путь Загрузки/{folder}/… для документов и JSON-отчёта. Основную папку и запрос места задаёт Chromium-Gost.",
     "settingsLabel": "Настройки загрузок Chromium-Gost",
     "settingsUrl": "chrome://settings/downloads"
   },
-  "archiveName": "lexpack-chromium-gost-0.8.4.zip",
+  "archiveName": "lexpack-chromium-gost-0.9.0.zip",
   "manifest": {
     "name": "LexPack — КонсультантПлюс (Chromium-Gost)",
-    "version": "0.8.4",
-    "versionName": "0.8.4-gost",
+    "version": "0.9.0",
+    "versionName": "0.9.0-gost",
     "minimumChromeVersion": "143",
     "description": "Отдельная сборка LexPack для Chromium-Gost: поиск и устойчивое массовое сохранение документов КонсультантПлюс.",
     "actionTitle": "LexPack Chromium-Gost"

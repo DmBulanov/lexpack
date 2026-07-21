@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>План выгрузки · LexPack</title>
+    <link rel="stylesheet" href="planner.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <div class="brand">LexPack</div>
+        <h1>План выгрузки</h1>
+      </div>
+      <div id="variantLabel" class="variant"></div>
+    </header>
+
+    <main>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+
+      <section class="panel" aria-labelledby="profileHeading">
+        <div class="section-heading">
+          <div>
+            <h2 id="profileHeading">Профиль</h2>
+            <p>Профиль сохраняется локально. Задача получает отдельный snapshot при запуске.</p>
+          </div>
+          <div class="profile-actions">
+            <button id="newProfile" type="button">Создать</button>
+            <button id="duplicateProfile" type="button">Дублировать</button>
+            <button id="deleteProfile" class="danger" type="button">Удалить</button>
+          </div>
+        </div>
+
+        <div class="profile-grid">
+          <label>
+            <span>Активный профиль</span>
+            <select id="profileSelect"></select>
+          </label>
+          <label>
+            <span>Название</span>
+            <input id="profileName" maxlength="80" />
+          </label>
+          <label>
+            <span>Формат</span>
+            <select id="format">
+              <option value="docx">DOCX</option>
+              <option value="pdf">PDF</option>
+              <option value="rtf">RTF</option>
+              <option value="txt">TXT</option>
+              <option value="html">HTML</option>
+            </select>
+          </label>
+          <label class="wide">
+            <span>Шаблон имени</span>
+            <input id="filenameTemplate" maxlength="300" spellcheck="false" />
+          </label>
+          <label class="wide">
+            <span>Шаблон папки</span>
+            <input id="folderTemplate" maxlength="300" spellcheck="false" />
+          </label>
+        </div>
+        <p class="tokens">
+          Токены: <code>{index}</code>, <code>{title}</code>, <code>{query}</code>,
+          <code>{instance}</code>, <code>{date}</code>, <code>{court}</code>,
+          <code>{case}</code>, <code>{documentType}</code>, <code>{format}</code>.
+          Расширение файла добавляется автоматически.
+        </p>
+        <div class="row-actions">
+          <button id="saveProfile" class="primary" type="button">Сохранить профиль</button>
+          <span id="profileStateText" class="muted" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="documentsHeading">
+        <div class="section-heading">
+          <div>
+            <h2 id="documentsHeading">Документы</h2>
+            <p id="collectionSummary">Подборка не загружена.</p>
+          </div>
+          <div class="selection-actions">
+            <button id="selectAll" type="button">Выбрать все</button>
+            <button id="selectNone" type="button">Снять все</button>
+          </div>
+        </div>
+
+        <div class="plan-summary">
+          <strong id="selectedCount">Выбрано: 0</strong>
+          <span id="planWarnings"></span>
+        </div>
+        <div id="planErrors" class="errors" role="alert" hidden></div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col"><span class="visually-hidden">Выбрать</span></th>
+                <th scope="col">№ выгрузки</th>
+                <th scope="col">№ источника</th>
+                <th scope="col">Исходный заголовок</th>
+                <th scope="col">Инстанция</th>
+                <th scope="col">Метаданные</th>
+                <th scope="col">Планируемый путь</th>
+                <th scope="col">Предупреждения</th>
+              </tr>
+            </thead>
+            <tbody id="documentRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel history-panel" aria-labelledby="historyHeading">
+        <div class="section-heading">
+          <div>
+            <h2 id="historyHeading">Локальная история</h2>
+            <p>Не более 50 завершённых задач. История не удаляет скачанные файлы.</p>
+          </div>
+          <button id="clearHistory" class="danger" type="button">Очистить историю</button>
+        </div>
+        <label class="history-mode">
+          <span>Режим</span>
+          <select id="historyMode">
+            <option value="off">Выключена</option>
+            <option value="safe">Безопасная (по умолчанию)</option>
+            <option value="detailed">Подробная</option>
+          </select>
+        </label>
+        <p id="historyNotice" class="privacy-notice"></p>
+        <div id="historyList" class="history-list"></div>
+      </section>
+    </main>
+
+    <footer class="launchbar">
+      <div>
+        <strong id="launchSummary">Выберите документы</strong>
+        <span id="launchHint">Перед запуском проверьте итоговые пути.</span>
+      </div>
+      <button id="startExport" class="primary large" type="button" disabled>
+        Запустить выгрузку
+      </button>
+    </footer>
+
+    <script src="../shared/variant-config.js"></script>
+    <script src="../shared/filename.js"></script>
+    <script src="../shared/runtime.js"></script>
+    <script src="../shared/profile-storage.js"></script>
+    <script src="../shared/metadata-parser.js"></script>
+    <script src="../shared/template-engine.js"></script>
+    <script src="../shared/export-plan.js"></script>
+    <script src="../shared/history-storage.js"></script>
+    <script src="planner.js"></script>
+  </body>
+</html>

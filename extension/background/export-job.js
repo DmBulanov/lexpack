@@ -15,28 +15,82 @@
     diagnosticsApi.CONS_DOWNLOAD_DIAGNOSTIC_CODES
   );
 
+  function cloneValue(value, fallback) {
+    try {
+      return structuredClone(value ?? fallback);
+    } catch {
+      return structuredClone(fallback);
+    }
+  }
+
   function consCreateExportJob(input, now = Date.now()) {
-    const items = (input.items || []).map((item, offset) => ({
-      index: offset + 1,
-      sourceIndex: item.index ?? offset + 1,
-      title: String(item.title || `document-${offset + 1}`),
-      url: String(item.url || ""),
-      instance: item.instance || null,
-      instanceLabel: item.instanceLabel || null,
-      status: "queued",
-      attempts: 0,
-      error: null,
-      filename: null,
-      downloadId: null,
-    }));
+    const items = (input.items || []).map((item, offset) => {
+      const exportIndex = Number(item.exportIndex ?? item.index) || offset + 1;
+      const originalTitle = String(
+        item.originalTitle || item.title || `document-${offset + 1}`
+      );
+      const plannedFilename = item.plannedFilename || null;
+      return {
+        exportIndex,
+        index: exportIndex,
+        sourceIndex: item.sourceIndex ?? item.index ?? offset + 1,
+        selected: item.selected !== false,
+        originalTitle,
+        title: originalTitle,
+        sourceUrl: String(item.sourceUrl || item.url || ""),
+        url: String(item.sourceUrl || item.url || ""),
+        instance: item.instance || null,
+        instanceLabel: item.instanceLabel || null,
+        metadata: cloneValue(item.metadata, {}),
+        plannedRelativeFolder: String(
+          item.plannedRelativeFolder || input.folder || CONS_DEFAULT_DOWNLOAD_FOLDER
+        ),
+        plannedFilename,
+        plannedRelativePath: String(
+          item.plannedRelativePath ||
+            `${
+              item.plannedRelativeFolder || input.folder || CONS_DEFAULT_DOWNLOAD_FOLDER
+            }/${plannedFilename || ""}`
+        ),
+        expectedFilename: String(item.expectedFilename || plannedFilename || "") || null,
+        warnings: cloneValue(item.warnings, []),
+        cleanupRulesApplied: cloneValue(item.cleanupRulesApplied, {
+          folder: [],
+          filename: [],
+        }),
+        collisionResolution: cloneValue(item.collisionResolution, {
+          type: "none",
+          internal: false,
+          external: false,
+        }),
+        status: "queued",
+        attempts: 0,
+        error: null,
+        filename: null,
+        actualFilename: null,
+        downloadId: null,
+        startedAt: null,
+        finishedAt: null,
+      };
+    });
     return {
-      version: 1,
+      version: 2,
       id: String(input.id || `job-${now}`),
       adapter: input.adapter,
       format: input.format,
       query: String(input.query || "").slice(0, 2000),
       scope: String(input.scope || "all"),
-      folder: String(input.folder || CONS_DEFAULT_DOWNLOAD_FOLDER),
+      folder: String(input.reportRelativeFolder || input.folder || CONS_DEFAULT_DOWNLOAD_FOLDER),
+      reportRelativeFolder: String(
+        input.reportRelativeFolder || input.folder || CONS_DEFAULT_DOWNLOAD_FOLDER
+      ),
+      profileSnapshot: cloneValue(input.profileSnapshot, null),
+      collection: cloneValue(input.collection, {}),
+      selectedCount: Number(input.selectedCount) || items.length,
+      historyMode: String(input.historyMode || "safe"),
+      extensionVersion: String(input.extensionVersion || ""),
+      variant: String(input.variant || ""),
+      reportQueryIncluded: input.reportQueryIncluded !== false,
       status: "running",
       phase: "queued",
       nextIndex: 0,
@@ -91,6 +145,7 @@
     item.status = "running";
     item.attempts = Number(item.attempts || 0) + 1;
     item.error = null;
+    item.startedAt = item.startedAt || new Date(now).toISOString();
     job.phase = "processing";
     job.current = {
       itemIndex,
@@ -98,6 +153,9 @@
       downloadId: null,
       blobUrl: null,
       expectedFilename: null,
+      expectedRelativeFolder: null,
+      expectedRelativePath: null,
+      sourceExpectedFilename: null,
       sourceUrl: null,
       downloadKind: null,
       downloadStartedAt: null,
@@ -113,8 +171,20 @@
     if (!item) throw new Error(`Нет элемента ${itemIndex}`);
     item.status = status;
     item.error = details.error ? String(details.error) : null;
-    item.filename = details.filename || item.filename || null;
+    item.actualFilename = details.filename || details.actualFilename || item.actualFilename || null;
+    item.filename = item.actualFilename;
     item.downloadId = details.downloadId ?? item.downloadId ?? null;
+    item.finishedAt = new Date(now).toISOString();
+    if (
+      item.actualFilename &&
+      item.expectedFilename &&
+      item.actualFilename !== item.expectedFilename
+    ) {
+      item.collisionResolution = {
+        ...(item.collisionResolution || { type: "none", internal: false }),
+        external: true,
+      };
+    }
     job.nextIndex = Math.max(job.nextIndex, itemIndex + 1);
     job.phase = "queued";
     job.current = null;
@@ -127,10 +197,26 @@
     if (!["done", "stopped", "failed"].includes(status)) {
       throw new Error(`Некорректный итоговый статус: ${status}`);
     }
+    const finishedAt = new Date(now).toISOString();
+    if (status === "stopped") {
+      for (const item of job.items || []) {
+        if (TERMINAL_ITEM_STATUSES.has(item.status)) continue;
+        item.status = "stopped";
+        item.error = item.error || "Не запущено: задача остановлена пользователем";
+        item.finishedAt = finishedAt;
+      }
+    } else if (status === "failed") {
+      for (const item of job.items || []) {
+        if (TERMINAL_ITEM_STATUSES.has(item.status)) continue;
+        item.status = "failed";
+        item.error = item.error || job.lastError || "Задача завершилась с ошибкой";
+        item.finishedAt = finishedAt;
+      }
+    }
     job.status = status;
     job.phase = "finished";
     job.current = null;
-    job.finishedAt = new Date(now).toISOString();
+    job.finishedAt = finishedAt;
     job.updatedAt = job.finishedAt;
     return job;
   }
