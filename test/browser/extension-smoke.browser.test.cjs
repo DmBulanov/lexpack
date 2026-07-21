@@ -122,7 +122,10 @@ test(`unpacked ${variant.id} MV3 extension starts its service worker in Chromium
     /Подпапка для документов и отчёта/i
   );
   await popup.locator('[data-info-target="folderInfo"]').click();
-  assert.match(await popup.locator("#folderInfo").innerText(), /можно открыть в Блокноте/);
+  assert.match(
+    await popup.locator("#folderInfo").innerText(),
+    /можно открыть в текстовом редакторе/
+  );
   assert.equal(await popup.locator("#btnOpenDownloadsSettings").isVisible(), true);
   await popup.keyboard.press("Escape");
   assert.equal(await popup.getByText("Можно выбрать несколько:", { exact: false }).count(), 0);

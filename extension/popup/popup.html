@@ -189,9 +189,16 @@
             aria-label="Папка загрузки"
             hidden
           >
-            Расширение предлагает путь Загрузки/<span id="folderPreview">LexPack</span>/…
-            для документов и JSON-отчёта. Основную папку и запрос места задаёт
-            Chrome. JSON — текстовый файл, его можно открыть в Блокноте.
+            <span id="browserDownloadsHelp">
+              Расширение предлагает путь Загрузки/<span id="folderPreview">LexPack</span>/…
+              для документов и JSON-отчёта. Основную папку и запрос места задаёт
+              Chrome.
+            </span>
+            <span id="safariDownloadsHelp" hidden>
+              Приложение LexPack Safari подтверждает загрузку и перемещает готовый
+              файл в Загрузки/<span id="safariFolderPreview">LexPack</span>/… .
+            </span>
+            JSON — текстовый файл, его можно открыть в текстовом редакторе.
             <button id="btnOpenDownloadsSettings" class="linkish" type="button">
               Настройки загрузок Chrome
             </button>

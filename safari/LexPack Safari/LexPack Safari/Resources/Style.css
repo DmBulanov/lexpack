@@ -1,0 +1,80 @@
+* {
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    cursor: default;
+}
+
+:root {
+    color-scheme: light dark;
+
+    --spacing: 20px;
+}
+
+html {
+    height: 100%;
+}
+
+body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+
+    gap: 12px;
+    margin: 0 calc(var(--spacing) * 2);
+    height: 100%;
+
+    font: -apple-system-short-body;
+    text-align: center;
+}
+
+h1,
+p {
+    margin: 0;
+}
+
+ol {
+    margin: 4px 0;
+    padding-left: 24px;
+    text-align: left;
+}
+
+li + li {
+    margin-top: 6px;
+}
+
+.status-ok {
+    color: #22863a;
+    font-weight: 600;
+}
+
+.status-warning {
+    color: #b06000;
+    font-weight: 600;
+}
+
+.note {
+    max-width: 480px;
+    color: -apple-system-secondary-label;
+}
+
+.downloads-status:empty {
+    display: none;
+}
+
+body:not(.state-on, .state-off) :is(.state-on, .state-off) {
+    display: none;
+}
+
+body.state-on :is(.state-off, .state-unknown) {
+    display: none;
+}
+
+body.state-off :is(.state-on, .state-unknown) {
+    display: none;
+}
+
+button {
+    font-size: 1em;
+    padding: 8px 14px;
+}

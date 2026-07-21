@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-import { DIST_ROOT, packageVariant, resolveVariantIds, writeReleaseIndex } from "./variant-lib.mjs";
+import {
+  DIST_ROOT,
+  packageVariant,
+  resolvePackageVariantIds,
+  writeReleaseIndex,
+} from "./variant-lib.mjs";
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 
-const ids = resolveVariantIds(process.argv[2] || "all");
+const ids = resolvePackageVariantIds(process.argv[2] || "all");
 const archivePrefixes = ids.map((id) =>
   id === "chrome" ? "lexpack-chrome-" : "lexpack-chromium-gost-"
 );

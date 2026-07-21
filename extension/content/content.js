@@ -126,6 +126,21 @@
           const doc = await adapter.extractCurrentDocument({
             format: msg.format || "docx",
           });
+          if (msg.sanitizeHtml === true && doc?.format === "html") {
+            if (typeof consBuildSafeHtmlDocument !== "function") {
+              return errorResponse(
+                "HTML_SANITIZER_UNAVAILABLE",
+                "Безопасная подготовка HTML недоступна"
+              );
+            }
+            doc.html = consBuildSafeHtmlDocument(
+              doc.title,
+              doc.html,
+              consProvenanceUrl(doc.url || location.href),
+              document
+            );
+            doc.htmlSanitized = true;
+          }
           return { ok: true, adapter: adapter.id, doc };
         }
 

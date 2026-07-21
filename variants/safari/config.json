@@ -1,0 +1,31 @@
+{
+  "id": "safari",
+  "browserLabel": "Safari",
+  "fileBackend": "safari-native",
+  "downloadsHelp": {
+    "description": "LexPack Safari подтверждает загрузку и перемещает готовый файл в Загрузки/{folder}/… через приложение LexPack Safari.",
+    "settingsLabel": "",
+    "settingsUrl": ""
+  },
+  "archiveName": "lexpack-safari-webextension-0.8.4.zip",
+  "manifest": {
+    "name": "LexPack — КонсультантПлюс (Safari)",
+    "version": "0.8.4",
+    "versionName": "0.8.4-safari",
+    "description": "Сборка LexPack для Safari на macOS: поиск и контролируемое массовое сохранение документов КонсультантПлюс.",
+    "actionTitle": "LexPack Safari"
+  },
+  "popup": {
+    "title": "LexPack Safari",
+    "brand": "LexPack · Safari"
+  },
+  "nativeDownloads": {
+    "startTimeoutMs": 45000,
+    "completionTimeoutMs": 90000,
+    "maxAttempts": 1,
+    "controlSettleMs": 500,
+    "lateRecoveryGraceMs": 0,
+    "interItemDelayMs": 1500,
+    "matchWindowMs": 45000
+  }
+}

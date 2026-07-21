@@ -149,6 +149,25 @@ test("native download behavior is controlled by the selected build variant", () 
   assert.match(source, /После \$\{NATIVE_DOWNLOAD_MAX_ATTEMPTS\} попыток/);
 });
 
+test("Safari routes files through its native app without Chromium download APIs", () => {
+  assert.match(source, /const FILE_BACKEND = globalThis\.LEXPACK_VARIANT\?\.fileBackend/);
+  assert.match(source, /const USE_BROWSER_DOWNLOADS = FILE_BACKEND === "browser-downloads"/);
+  assert.match(source, /const USE_SAFARI_NATIVE = FILE_BACKEND === "safari-native"/);
+  assert.match(
+    source,
+    /if \(USE_BROWSER_DOWNLOADS\) \{[\s\S]{0,120}chrome\.downloads\.onDeterminingFilename\.addListener/
+  );
+  assert.match(source, /chrome\.runtime\.sendNativeMessage\("ru\.lexpack\.safari"/);
+  assert.match(source, /chrome\.runtime\.connectNative\("ru\.lexpack\.safari"\)/);
+  assert.match(source, /SAFARI_DOWNLOADS_BOOKMARK_KEY/);
+  assert.match(source, /request\.downloadsBookmark = bookmark/);
+  assert.match(source, /safariNativeRequest\("SAVE_TEXT_FILE"/);
+  assert.match(source, /safariNativeRequest\("PREPARE_DOWNLOAD"/);
+  assert.match(source, /safariNativeRequest\("CLAIM_DOWNLOAD"/);
+  assert.match(source, /current\.downloadKind === "safari-native"/);
+  assert.match(source, /Safari прервал подтверждение создаваемого файла/);
+});
+
 test("download diagnostics are closed, separate from reports, and exposed safely", () => {
   assert.match(source, /consNativeDownloadDecision/);
   assert.match(source, /consAppendDownloadDiagnostic/);
@@ -191,6 +210,7 @@ test("local reset removes every extension setting, completed job, and cached col
   ]) {
     assert.match(resetBody, new RegExp(`"${key}"`));
   }
+  assert.match(resetBody, /SAFARI_DOWNLOADS_BOOKMARK_KEY/);
   assert.match(
     resetBody,
     /chrome\.storage\.session\.remove\(\[[\s\S]{0,120}JOB_STORAGE_KEY,[\s\S]{0,80}PROGRESS_STORAGE_KEY,[\s\S]{0,80}SEARCH_COLLECTION_STORAGE_KEY,[\s\S]{0,40}\]\)/

@@ -1,6 +1,12 @@
 {
   "id": "chrome",
   "browserLabel": "Chrome",
+  "fileBackend": "browser-downloads",
+  "downloadsHelp": {
+    "description": "Расширение предлагает путь Загрузки/{folder}/… для документов и JSON-отчёта. Основную папку и запрос места задаёт Chrome.",
+    "settingsLabel": "Настройки загрузок Chrome",
+    "settingsUrl": "chrome://settings/downloads"
+  },
   "archiveName": "lexpack-chrome-0.8.4.zip",
   "manifest": {
     "name": "LexPack — КонсультантПлюс (Chrome)",

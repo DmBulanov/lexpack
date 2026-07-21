@@ -9,7 +9,8 @@ export const EXTENSION_ROOT = path.join(ROOT, "extension");
 export const VARIANTS_ROOT = path.join(ROOT, "variants");
 export const BUILD_ROOT = path.join(ROOT, "build");
 export const DIST_ROOT = path.join(ROOT, "dist");
-export const VARIANT_IDS = Object.freeze(["chrome", "chromium-gost"]);
+export const VARIANT_IDS = Object.freeze(["chrome", "chromium-gost", "safari"]);
+export const PACKAGE_VARIANT_IDS = Object.freeze(["chrome", "chromium-gost"]);
 
 async function readJson(file) {
   return JSON.parse(await readFile(file, "utf8"));
@@ -35,6 +36,16 @@ export function resolveVariantIds(selector = "all") {
   return [selector];
 }
 
+export function resolvePackageVariantIds(selector = "all") {
+  if (selector === "all") return [...PACKAGE_VARIANT_IDS];
+  if (!PACKAGE_VARIANT_IDS.includes(selector)) {
+    throw new Error(
+      `Unknown packaged variant "${selector}"; expected ${PACKAGE_VARIANT_IDS.join(", ")} or all`
+    );
+  }
+  return [selector];
+}
+
 export async function loadVariant(id) {
   const configPath = path.join(VARIANTS_ROOT, id, "config.json");
   const config = await readJson(configPath);
@@ -46,13 +57,22 @@ export async function loadVariant(id) {
     ["manifest.name", config.manifest?.name],
     ["manifest.version", config.manifest?.version],
     ["manifest.versionName", config.manifest?.versionName],
-    ["manifest.minimumChromeVersion", config.manifest?.minimumChromeVersion],
     ["manifest.description", config.manifest?.description],
     ["manifest.actionTitle", config.manifest?.actionTitle],
     ["popup.title", config.popup?.title],
     ["popup.brand", config.popup?.brand],
   ]) {
     requireText(value, `${id}.${label}`);
+  }
+
+  if (!["browser-downloads", "safari-native"].includes(config.fileBackend)) {
+    throw new Error(`${id}.fileBackend must be browser-downloads or safari-native`);
+  }
+  if (config.fileBackend === "browser-downloads") {
+    requireText(
+      config.manifest?.minimumChromeVersion,
+      `${id}.manifest.minimumChromeVersion`
+    );
   }
 
   if (!/^\d+(?:\.\d+){0,3}$/.test(config.manifest.version)) {
@@ -91,6 +111,8 @@ export function publicVariantConfig(config) {
     browserLabel: config.browserLabel,
     popupTitle: config.popup.title,
     popupBrand: config.popup.brand,
+    fileBackend: config.fileBackend,
+    downloadsHelp: config.downloadsHelp || {},
     nativeDownloads: config.nativeDownloads,
   };
 }
@@ -101,23 +123,38 @@ function variantScript(config) {
 }
 
 function buildManifest(base, config) {
-  return {
+  const safariNative = config.fileBackend === "safari-native";
+  const permissions = safariNative
+    ? [...base.permissions.filter((permission) => !["downloads", "offscreen"].includes(permission)), "nativeMessaging"]
+    : base.permissions;
+  const contentScripts = base.content_scripts.map((entry) => ({
+    ...entry,
+    js: safariNative
+      ? entry.js.flatMap((file) =>
+          file === "shared/runtime.js" ? [file, "shared/safe-html.js"] : [file]
+        )
+      : entry.js,
+  }));
+  const manifest = {
     manifest_version: base.manifest_version,
     name: config.manifest.name,
     version: config.manifest.version,
     version_name: config.manifest.versionName,
-    minimum_chrome_version: config.manifest.minimumChromeVersion,
     description: config.manifest.description,
-    permissions: base.permissions,
+    permissions,
     host_permissions: base.host_permissions,
     action: {
       ...base.action,
       default_title: config.manifest.actionTitle,
     },
     background: base.background,
-    content_scripts: base.content_scripts,
+    content_scripts: contentScripts,
     icons: base.icons,
   };
+  if (!safariNative) {
+    manifest.minimum_chrome_version = config.manifest.minimumChromeVersion;
+  }
+  return manifest;
 }
 
 export async function buildVariant(id) {
@@ -179,14 +216,30 @@ export async function checkBuiltVariant(id) {
     name: config.manifest.name,
     version: config.manifest.version,
     version_name: config.manifest.versionName,
-    minimum_chrome_version: config.manifest.minimumChromeVersion,
   };
+  if (config.fileBackend === "browser-downloads") {
+    expected.minimum_chrome_version = config.manifest.minimumChromeVersion;
+  }
   for (const [key, value] of Object.entries(expected)) {
     if (manifest[key] !== value) {
       throw new Error(`${id}: manifest.${key} is ${JSON.stringify(manifest[key])}, expected ${JSON.stringify(value)}`);
     }
   }
   if (manifest.manifest_version !== 3) throw new Error(`${id}: manifest_version must be 3`);
+  if (config.fileBackend === "safari-native") {
+    if (manifest.minimum_chrome_version !== undefined) {
+      throw new Error(`${id}: Safari manifest must not declare minimum_chrome_version`);
+    }
+    if (manifest.permissions.includes("downloads") || manifest.permissions.includes("offscreen")) {
+      throw new Error(`${id}: Safari manifest contains Chromium-only permissions`);
+    }
+    if (!manifest.permissions.includes("nativeMessaging")) {
+      throw new Error(`${id}: Safari manifest must declare nativeMessaging`);
+    }
+    if (!manifest.content_scripts?.[0]?.js?.includes("shared/safe-html.js")) {
+      throw new Error(`${id}: Safari content scripts must provide DOM sanitization`);
+    }
+  }
   if (!manifest.content_scripts?.[0]?.js?.includes("shared/variant-config.js")) {
     throw new Error(`${id}: variant config must load before shared runtime code`);
   }

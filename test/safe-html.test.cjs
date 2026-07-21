@@ -150,16 +150,24 @@ function renderFixture(fixture) {
   return { html, exported, unsafeHtml: fake.unsafeHtml };
 }
 
-test("every HTML sink uses the offscreen static sanitizer boundary", () => {
+test("every HTML sink uses a static sanitizer boundary", () => {
   const worker = fs.readFileSync(workerPath, "utf8");
+  const content = fs.readFileSync(
+    path.join(root, "extension/content/content.js"),
+    "utf8"
+  );
   const offscreen = fs.readFileSync(offscreenPath, "utf8");
   const offscreenHtml = fs.readFileSync(offscreenHtmlPath, "utf8");
 
   assert.match(worker, /offscreenRequest\("SANITIZE_HTML"/);
+  assert.match(worker, /sanitizeHtml: USE_SAFARI_NATIVE && job\.format === "html"/);
   assert.match(worker, /async function buildExportBody\(/);
   assert.doesNotMatch(worker, /format\s*===\s*["']html["']\s*\?\s*[^:]+\.html/);
   assert.match(offscreen, /consBuildSafeHtmlDocument\(/);
   assert.match(offscreenHtml, /\.\.\/shared\/safe-html\.js/);
+  assert.match(content, /if \(msg\.sanitizeHtml === true && doc\?\.format === "html"\)/);
+  assert.match(content, /doc\.html = consBuildSafeHtmlDocument\(/);
+  assert.match(content, /doc\.htmlSanitized = true/);
 });
 
 test("the policy permits only declared markup, attributes, and inert raster data URLs", () => {

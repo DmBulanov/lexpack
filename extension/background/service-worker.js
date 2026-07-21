@@ -10,11 +10,18 @@ const NATIVE_DOWNLOAD_CONFIG = globalThis.LEXPACK_VARIANT?.nativeDownloads;
 if (!NATIVE_DOWNLOAD_CONFIG) {
   throw new Error("LexPack variant configuration is missing");
 }
+const FILE_BACKEND = globalThis.LEXPACK_VARIANT?.fileBackend || "browser-downloads";
+const USE_BROWSER_DOWNLOADS = FILE_BACKEND === "browser-downloads";
+const USE_SAFARI_NATIVE = FILE_BACKEND === "safari-native";
+if (!USE_BROWSER_DOWNLOADS && !USE_SAFARI_NATIVE) {
+  throw new Error(`Unknown LexPack file backend: ${FILE_BACKEND}`);
+}
 
 const JOB_STORAGE_KEY = "exportJob";
 const PROGRESS_STORAGE_KEY = "exportProgress";
 const SEARCH_COLLECTION_STORAGE_KEY = "searchCollection";
 const RESUME_ALARM = "cons-export-resume";
+const SAFARI_DOWNLOADS_BOOKMARK_KEY = "safariDownloadsBookmark";
 const OFFSCREEN_PATH = "offscreen/sanitizer.html";
 const MAX_EXPORT_ITEMS = 200;
 const TAB_TIMEOUT_MS = 45000;
@@ -32,6 +39,7 @@ const CONTENT_SCRIPT_FILES = [
   "shared/variant-config.js",
   "shared/filename.js",
   "shared/runtime.js",
+  "shared/safe-html.js",
   "content/adapters/public-site.js",
   "content/adapters/online-app.js",
   "content/content.js",
@@ -42,6 +50,7 @@ let runnerPromise = null;
 let offscreenCreating = null;
 let jobStartInProgress = false;
 let searchFlowInProgress = false;
+let safariAppPort = null;
 const contentInjectionByTab = new Map();
 const NATIVE_DIAGNOSTIC_RANK = Object.freeze({
   NM_REFERRER: 1,
@@ -185,6 +194,7 @@ async function clearResumeAlarmBestEffort() {
 }
 
 async function ensureOffscreenDocument() {
+  if (!USE_BROWSER_DOWNLOADS) return;
   const documentUrl = chrome.runtime.getURL(OFFSCREEN_PATH);
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
@@ -207,6 +217,7 @@ async function ensureOffscreenDocument() {
 }
 
 async function closeOffscreenDocument() {
+  if (!USE_BROWSER_DOWNLOADS) return;
   try {
     const contexts = await chrome.runtime.getContexts({
       contextTypes: ["OFFSCREEN_DOCUMENT"],
@@ -219,6 +230,9 @@ async function closeOffscreenDocument() {
 }
 
 async function offscreenRequest(type, payload = {}) {
+  if (!USE_BROWSER_DOWNLOADS) {
+    throw new Error("Offscreen document is unavailable for this browser");
+  }
   await ensureOffscreenDocument();
   const response = await chrome.runtime.sendMessage({
     target: "offscreen",
@@ -231,6 +245,12 @@ async function offscreenRequest(type, payload = {}) {
 
 async function buildExportBody(doc, format, fallbackUrl = "") {
   if (format === "html") {
+    if (doc?.htmlSanitized === true) {
+      return { body: String(doc.html || ""), mime: "text/html;charset=utf-8" };
+    }
+    if (USE_SAFARI_NATIVE) {
+      throw new Error("Safari не получил безопасно подготовленный HTML документа");
+    }
     const response = await offscreenRequest("SANITIZE_HTML", {
       title: doc?.title || "document",
       html: doc?.html || "",
@@ -261,6 +281,20 @@ async function revokeBlobUrl(url) {
 }
 
 async function downloadGeneratedFile(folder, filename, content, mime) {
+  if (USE_SAFARI_NATIVE) {
+    const response = await safariNativeRequest("SAVE_TEXT_FILE", {
+      folder: consSanitizeFolder(folder),
+      filename,
+      content,
+      mime,
+    });
+    return {
+      downloadId: null,
+      blobUrl: null,
+      completed: true,
+      filename: response.filename || filename,
+    };
+  }
   const url = await createBlobUrl(content, mime);
   try {
     const downloadId = await chrome.downloads.download({
@@ -315,6 +349,7 @@ async function suggestedFilenameFor(downloadItem) {
 }
 
 function createCancelGuard(current) {
+  if (!USE_BROWSER_DOWNLOADS) return null;
   if (!current?.downloadKind) return null;
   return {
     ...current,
@@ -325,12 +360,14 @@ function createCancelGuard(current) {
   };
 }
 
-chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-  suggestedFilenameFor(downloadItem)
-    .then((suggestion) => suggest(suggestion || undefined))
-    .catch(() => suggest());
-  return true;
-});
+if (USE_BROWSER_DOWNLOADS) {
+  chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+    suggestedFilenameFor(downloadItem)
+      .then((suggestion) => suggest(suggestion || undefined))
+      .catch(() => suggest());
+    return true;
+  });
+}
 
 async function cancelGuardedDownload(job, downloadItem) {
   const guard = job?.cancelGuard;
@@ -433,13 +470,15 @@ async function attachCreatedDownload(downloadItem) {
   ensureExportRunner();
 }
 
-chrome.downloads.onCreated.addListener((item) => {
-  attachCreatedDownload(item).catch(() => {});
-});
+if (USE_BROWSER_DOWNLOADS) {
+  chrome.downloads.onCreated.addListener((item) => {
+    attachCreatedDownload(item).catch(() => {});
+  });
 
-chrome.downloads.onChanged.addListener(() => {
-  ensureExportRunner();
-});
+  chrome.downloads.onChanged.addListener(() => {
+    ensureExportRunner();
+  });
+}
 
 async function findRecentDownloads(current) {
   const startedAfter = new Date(Number(current.downloadStartedAt || Date.now()) - 2000).toISOString();
@@ -597,12 +636,15 @@ async function ensureContentScripts(tabId) {
 
 async function sendToTab(tabId, message) {
   try {
-    return await chrome.tabs.sendMessage(tabId, message);
+    const response = await chrome.tabs.sendMessage(tabId, message);
+    // Safari can resolve with `undefined` while a newly navigated tab has no
+    // content-script receiver yet. Chromium rejects the same call instead.
+    if (response !== undefined && response !== null) return response;
   } catch (error) {
     if (!isMissingContentReceiver(error)) throw error;
-    await ensureContentScripts(tabId);
-    return chrome.tabs.sendMessage(tabId, message);
   }
+  await ensureContentScripts(tabId);
+  return chrome.tabs.sendMessage(tabId, message);
 }
 
 async function waitContentReady(tabId, jobId = null) {
@@ -668,7 +710,7 @@ async function updateCurrent(jobId, patch, phase) {
 async function cleanupResources(job, cancelDownload = false) {
   const current = job?.current;
   if (!current) return;
-  if (cancelDownload && current.downloadId != null) {
+  if (USE_BROWSER_DOWNLOADS && cancelDownload && current.downloadId != null) {
     try {
       const [download] = await chrome.downloads.search({ id: current.downloadId });
       if (download?.state === "in_progress") await chrome.downloads.cancel(current.downloadId);
@@ -676,6 +718,7 @@ async function cleanupResources(job, cancelDownload = false) {
       // Best effort cancellation.
     }
   }
+  if (current.nativeToken) await cancelSafariNativeWatch(current.nativeToken);
   if (current.tabId != null) {
     try {
       await chrome.tabs.remove(current.tabId);
@@ -689,6 +732,21 @@ async function cleanupResources(job, cancelDownload = false) {
 async function resumeExistingDownload(job) {
   const current = job.current;
   if (!current?.downloadKind) return null;
+  if (current.downloadKind === "safari-native") {
+    if (!current.nativeToken) {
+      throw new Error("Наблюдение LexPack Safari за загрузкой потеряно");
+    }
+    return waitForSafariNativeDownload(
+      job.id,
+      current.nativeToken,
+      NATIVE_DOWNLOAD_TIMEOUT_MS
+    );
+  }
+  if (USE_SAFARI_NATIVE) {
+    throw new Error(
+      "Safari прервал подтверждение создаваемого файла; повторите экспорт"
+    );
+  }
   const completionTimeout = current.downloadKind === "native"
     ? NATIVE_DOWNLOAD_TIMEOUT_MS
     : DIRECT_DOWNLOAD_TIMEOUT_MS;
@@ -708,6 +766,128 @@ async function resumeExistingDownload(job) {
     completed,
     native: current.downloadKind === "native",
   };
+}
+
+function safariBookmarkFromAppMessage(message) {
+  const queue = [message];
+  const seen = new Set();
+  while (queue.length && seen.size < 24) {
+    const value = queue.shift();
+    if (!value || typeof value !== "object" || seen.has(value)) continue;
+    seen.add(value);
+    if (
+      typeof value.bookmark === "string" &&
+      value.bookmark.length > 0 &&
+      value.bookmark.length <= 1024 * 1024
+    ) {
+      return value.bookmark;
+    }
+    for (const key of ["userInfo", "message", "data", "payload"]) {
+      if (value[key] && typeof value[key] === "object") queue.push(value[key]);
+    }
+  }
+  return "";
+}
+
+function connectSafariAppPort() {
+  if (
+    !USE_SAFARI_NATIVE ||
+    safariAppPort ||
+    typeof chrome.runtime.connectNative !== "function"
+  ) {
+    return;
+  }
+  try {
+    const port = chrome.runtime.connectNative("ru.lexpack.safari");
+    safariAppPort = port;
+    port.onMessage.addListener((message) => {
+      const bookmark = safariBookmarkFromAppMessage(message);
+      if (bookmark) {
+        chrome.storage.local.set({ [SAFARI_DOWNLOADS_BOOKMARK_KEY]: bookmark });
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      if (safariAppPort === port) safariAppPort = null;
+    });
+  } catch {
+    safariAppPort = null;
+  }
+}
+
+async function safariNativeRequest(type, payload = {}) {
+  if (!USE_SAFARI_NATIVE || typeof chrome.runtime.sendNativeMessage !== "function") {
+    throw new Error("Нативный обработчик LexPack Safari недоступен");
+  }
+  connectSafariAppPort();
+  const request = {
+    type,
+    ...payload,
+  };
+  if (!["PING", "CANCEL_DOWNLOAD"].includes(type)) {
+    const stored = await chrome.storage.local.get(SAFARI_DOWNLOADS_BOOKMARK_KEY);
+    const bookmark = stored[SAFARI_DOWNLOADS_BOOKMARK_KEY];
+    if (typeof bookmark !== "string" || !bookmark) {
+      const error = new Error(
+        "Откройте приложение LexPack Safari и выберите папку загрузок Safari"
+      );
+      error.code = "DOWNLOADS_PERMISSION_REQUIRED";
+      throw error;
+    }
+    request.downloadsBookmark = bookmark;
+  }
+  const response = await chrome.runtime.sendNativeMessage("ru.lexpack.safari", request);
+  if (!response?.ok) {
+    const error = new Error(response?.error || `Ошибка LexPack Safari: ${type}`);
+    error.code = response?.code || "SAFARI_NATIVE_ERROR";
+    throw error;
+  }
+  return response;
+}
+
+async function prepareSafariNativeDownload(folder, expectedFilename) {
+  const response = await safariNativeRequest("PREPARE_DOWNLOAD", {
+    folder: consSanitizeFolder(folder),
+    filename: expectedFilename,
+  });
+  if (!response.token) throw new Error("LexPack Safari не создал наблюдение за загрузкой");
+  return response.token;
+}
+
+async function cancelSafariNativeWatch(token) {
+  if (!token || !USE_SAFARI_NATIVE) return;
+  try {
+    await safariNativeRequest("CANCEL_DOWNLOAD", { token });
+  } catch {
+    // The watch expires automatically; cleanup is best effort.
+  }
+}
+
+async function waitForSafariNativeDownload(jobId, token, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await assertJobCanContinue(jobId);
+    const response = await safariNativeRequest("CLAIM_DOWNLOAD", { token });
+    if (response.status === "complete") {
+      return {
+        downloadId: null,
+        filename: response.filename,
+        native: true,
+      };
+    }
+    if (response.status === "ambiguous") {
+      const error = new Error(
+        response.error || "Safari обнаружил несколько подходящих загрузок"
+      );
+      error.code = "SAFARI_DOWNLOAD_AMBIGUOUS";
+      throw error;
+    }
+    await delay(POLL_MS);
+  }
+  const error = unconfirmedDownloadError(
+    "LexPack Safari не подтвердил завершение загрузки; проверьте Safari → Настройки → Сайты → Загрузки (для online.consultant.ru — «Разрешить») и корень выбранной папки загрузок"
+  );
+  error.code = DOWNLOAD_UNCONFIRMED_CODE;
+  throw error;
 }
 
 async function recoverTimedOutNativeDownload(job, graceMs) {
@@ -791,14 +971,18 @@ async function processExportItem(job, itemIndex) {
       const settled = await waitForActiveJobDelay(job.id, NATIVE_CONTROL_SETTLE_MS);
       if (!settled) await assertJobCanContinue(job.id);
       const startedAt = Date.now();
+      const nativeToken = USE_SAFARI_NATIVE
+        ? await prepareSafariNativeDownload(job.folder, expectedFilename)
+        : null;
       await updateCurrent(
         job.id,
         {
-          downloadKind: "native",
+          downloadKind: USE_SAFARI_NATIVE ? "safari-native" : "native",
           downloadStartedAt: startedAt,
           expectedFilename,
           sourceUrl: url,
           extensionId: chrome.runtime.id,
+          nativeToken,
         },
         "triggering_native_download"
       );
@@ -809,6 +993,13 @@ async function processExportItem(job, itemIndex) {
       });
       if (!extracted?.ok || !extracted.doc?.nativeSaveTriggered) {
         throw new Error(extracted?.error || "Сайт не запустил нативное сохранение");
+      }
+      if (USE_SAFARI_NATIVE) {
+        return await waitForSafariNativeDownload(
+          job.id,
+          nativeToken,
+          NATIVE_DOWNLOAD_TIMEOUT_MS
+        );
       }
       const downloadId = await waitForCurrentDownloadId(
         job.id,
@@ -829,6 +1020,7 @@ async function processExportItem(job, itemIndex) {
     const extracted = await sendToTab(tab.id, {
       type: "EXTRACT_DOCUMENT",
       format: job.format,
+      sanitizeHtml: USE_SAFARI_NATIVE && job.format === "html",
     });
     if (!extracted?.ok || !extracted.doc) {
       throw new Error(extracted?.error || "Не удалось извлечь документ");
@@ -851,6 +1043,12 @@ async function processExportItem(job, itemIndex) {
     );
     await assertJobCanContinue(job.id);
     const download = await downloadGeneratedFile(job.folder, expectedFilename, body, mime);
+    if (download.completed) {
+      return {
+        downloadId: null,
+        filename: download.filename || expectedFilename,
+      };
+    }
     await updateCurrent(
       job.id,
       { downloadId: download.downloadId, blobUrl: download.blobUrl },
@@ -947,6 +1145,12 @@ async function saveJobReport(job) {
     serializeJobReport(await readJob()),
     "application/json;charset=utf-8"
   );
+  if (download.completed) {
+    return {
+      filename: download.filename || filename,
+      downloadId: null,
+    };
+  }
   await updateCurrent(job.id, {
     downloadId: download.downloadId,
     blobUrl: download.blobUrl,
@@ -1854,6 +2058,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  connectSafariAppPort();
   ensureExportRunner();
 });
 
@@ -1940,6 +2145,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             body,
             mime
           );
+          if (download.completed) {
+            return {
+              ok: true,
+              filename: download.filename || filename,
+              downloadId: null,
+            };
+          }
           await waitForDownloadCompletion(
             "standalone",
             download.downloadId,
@@ -2017,6 +2229,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "maxItems",
           "lastInstances",
           "settingsSchemaVersion",
+          SAFARI_DOWNLOADS_BOOKMARK_KEY,
         ]);
         await chrome.storage.session.remove([
           JOB_STORAGE_KEY,
@@ -2035,6 +2248,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch((error) => sendResponse({ ok: false, code: error.code, error: errorText(error) }));
   return true;
 });
+
+connectSafariAppPort();
 
 readJob()
   .then(async (job) => {

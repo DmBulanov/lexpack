@@ -13,6 +13,9 @@ const els = {
   format: document.getElementById("format"),
   downloadFolder: document.getElementById("downloadFolder"),
   folderPreview: document.getElementById("folderPreview"),
+  safariFolderPreview: document.getElementById("safariFolderPreview"),
+  browserDownloadsHelp: document.getElementById("browserDownloadsHelp"),
+  safariDownloadsHelp: document.getElementById("safariDownloadsHelp"),
   btnOpenDownloadsSettings: document.getElementById("btnOpenDownloadsSettings"),
   searchPanel: document.getElementById("searchPanel"),
   searchSummary: document.getElementById("searchSummary"),
@@ -39,6 +42,19 @@ const els = {
   infoButtons: [...document.querySelectorAll(".info-button[data-info-target]")],
   log: document.getElementById("log"),
 };
+
+const usesSafariNativeFiles = activeVariant.fileBackend === "safari-native";
+els.browserDownloadsHelp.hidden = usesSafariNativeFiles;
+els.safariDownloadsHelp.hidden = !usesSafariNativeFiles;
+els.btnOpenDownloadsSettings.hidden = usesSafariNativeFiles;
+if (!usesSafariNativeFiles && activeVariant.downloadsHelp?.settingsLabel) {
+  els.btnOpenDownloadsSettings.textContent = activeVariant.downloadsHelp.settingsLabel;
+}
+
+function updateFolderPreviews(folder) {
+  els.folderPreview.textContent = folder;
+  els.safariFolderPreview.textContent = folder;
+}
 
 const STATUS_LABELS = {
   idle: "ожидание",
@@ -161,7 +177,14 @@ function setProgressInfo(messages = []) {
 
 async function sendMessage(message) {
   try {
-    return await chrome.runtime.sendMessage(message);
+    let response = await chrome.runtime.sendMessage(message);
+    // Safari may wake an unloaded MV3 service worker asynchronously and resolve
+    // the first message before its listener is ready. Retry the cold start once.
+    if (response === undefined || response === null) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      response = await chrome.runtime.sendMessage(message);
+    }
+    return response ?? { ok: false, error: "Фоновый процесс расширения не ответил" };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
   }
@@ -442,7 +465,7 @@ async function storeSettings() {
   };
   await chrome.storage.local.set(settings);
   els.downloadFolder.value = folder;
-  els.folderPreview.textContent = folder;
+  updateFolderPreviews(folder);
 }
 
 async function init() {
@@ -474,7 +497,7 @@ async function init() {
     });
   }
   els.downloadFolder.value = folder;
-  els.folderPreview.textContent = folder;
+  updateFolderPreviews(folder);
 
   const running = await refreshProgress();
   if (running) pollWhileRunning();
@@ -856,6 +879,12 @@ els.query.addEventListener("keydown", (event) => {
     runFind();
   }
 });
+els.maxItems.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    exportCachedItems();
+  }
+});
 els.query.addEventListener("input", () => {
   if (
     collectionSource === "search" &&
@@ -890,8 +919,10 @@ els.maxItems.addEventListener("change", () => {
   updateActionState();
 });
 els.btnOpenDownloadsSettings.addEventListener("click", () => {
-  chrome.tabs.create({ url: "chrome://settings/downloads" }).catch(() => {
-    setLog("Откройте вручную chrome://settings/downloads и выключите запрос места сохранения");
+  const settingsUrl = activeVariant.downloadsHelp?.settingsUrl;
+  if (!settingsUrl) return;
+  chrome.tabs.create({ url: settingsUrl }).catch(() => {
+    setLog(`Откройте вручную ${settingsUrl} и выключите запрос места сохранения`);
   });
 });
 
@@ -944,7 +975,7 @@ els.btnClearData.addEventListener("click", async () => {
   }
   els.query.value = "";
   els.downloadFolder.value = CONS_DEFAULT_DOWNLOAD_FOLDER;
-  els.folderPreview.textContent = CONS_DEFAULT_DOWNLOAD_FOLDER;
+  updateFolderPreviews(CONS_DEFAULT_DOWNLOAD_FOLDER);
   const defaultScope = [...els.scope.options].find(
     (option) => option.value === "practice" && !option.disabled
   ) || [...els.scope.options].find((option) => !option.disabled);

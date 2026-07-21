@@ -12,6 +12,14 @@ const html = fs.readFileSync(
   "utf8"
 );
 
+test("popup retries Safari's empty cold-start response once", () => {
+  assert.match(
+    source,
+    /response === undefined \|\| response === null[\s\S]{0,180}setTimeout\(resolve, 150\)[\s\S]{0,180}chrome\.runtime\.sendMessage\(message\)/
+  );
+  assert.match(source, /Фоновый процесс расширения не ответил/);
+});
+
 test("cached result provenance is exported with the cached list", () => {
   assert.match(source, /let cachedQuery = ""/);
   assert.match(source, /let cachedScope = "current-list"/);
@@ -66,7 +74,7 @@ test("popup explains the result-sized quantity, report, and exceptional download
     /id="limitInfo"[\s\S]*автоматически выбраны все найденные документы[\s\S]*не\s+более 200/i
   );
   assert.doesNotMatch(html, /rememberQuery|rememberInfo|Запомнить запрос/);
-  assert.match(html, /JSON — текстовый файл, его можно открыть в Блокноте/);
+  assert.match(html, /JSON — текстовый файл, его можно открыть в текстовом редакторе/);
   assert.match(source, /unconfirmed = 0/);
   assert.match(source, /if \(unconfirmed > 0\)/);
   assert.match(source, /требует проверки \$\{unconfirmed\}/);
@@ -156,6 +164,10 @@ test("result quantity is hidden until collection and defaults to the collected c
   );
   assert.match(source, /els\.maxItems\.addEventListener\("input"/);
   assert.match(source, /els\.maxItems\.addEventListener\("change"/);
+  assert.match(
+    source,
+    /els\.maxItems\.addEventListener\("keydown"[\s\S]{0,180}event\.metaKey[\s\S]{0,180}exportCachedItems\(\)/
+  );
   assert.ok(
     html.indexOf('id="resultActions"') < html.indexOf('class="block search-block"'),
     "the already-open collection must appear before the new-search form"

@@ -11,6 +11,10 @@ Thumbs.db
 .idea/
 *.swp
 
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
 # Local / secrets
 .env
 *.pem
