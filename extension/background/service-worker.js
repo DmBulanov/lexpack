@@ -42,6 +42,10 @@ const CONTENT_SCRIPT_FILES = [
   "content/adapters/online-app.js",
   "content/content.js",
 ];
+const DOCX_MAIN_WORLD_FILES = [
+  "shared/docx-sanitizer.js",
+  "content/docx-cleaner-main.js",
+];
 
 let jobMutationQueue = Promise.resolve();
 let runnerPromise = null;
@@ -49,6 +53,7 @@ let offscreenCreating = null;
 let jobStartInProgress = false;
 let searchFlowInProgress = false;
 const contentInjectionByTab = new Map();
+const docxInjectionByTab = new Map();
 const NATIVE_DIAGNOSTIC_RANK = Object.freeze({
   NM_REFERRER: 1,
   NM_FILENAME: 2,
@@ -676,7 +681,27 @@ async function ensureContentScripts(tabId) {
   return contentInjectionByTab.get(tabId);
 }
 
+async function ensureDocxCleaner(tabId) {
+  if (!docxInjectionByTab.has(tabId)) {
+    const injection = chrome.scripting
+      .executeScript({
+        target: { tabId },
+        files: DOCX_MAIN_WORLD_FILES,
+        world: "MAIN",
+      })
+      .finally(() => docxInjectionByTab.delete(tabId));
+    docxInjectionByTab.set(tabId, injection);
+  }
+  return docxInjectionByTab.get(tabId);
+}
+
 async function sendToTab(tabId, message) {
+  if (
+    message?.type === "EXTRACT_DOCUMENT" &&
+    ["docx", "word"].includes(String(message.format || "").toLowerCase())
+  ) {
+    await ensureDocxCleaner(tabId);
+  }
   try {
     const response = await chrome.tabs.sendMessage(tabId, message);
     // A newly navigated tab may not have a content-script receiver yet.
@@ -790,6 +815,7 @@ async function resumeExistingDownload(job) {
     filename: downloadBasename(completed, current.expectedFilename),
     completed,
     native: current.downloadKind === "native",
+    contentCleanup: current.contentCleanup || null,
   };
 }
 
@@ -887,6 +913,14 @@ async function processExportItem(job, itemIndex) {
       const settled = await waitForActiveJobDelay(job.id, NATIVE_CONTROL_SETTLE_MS);
       if (!settled) await assertJobCanContinue(job.id);
       const startedAt = Date.now();
+      const expectedContentCleanup =
+        job.format === "docx"
+          ? {
+              consultantDataRemoved: true,
+              pageNumberPreserved: true,
+              documentBodyPreserved: true,
+            }
+          : null;
       await updateCurrent(
         job.id,
         {
@@ -898,6 +932,7 @@ async function processExportItem(job, itemIndex) {
           sourceExpectedFilename,
           sourceUrl: url,
           extensionId: chrome.runtime.id,
+          contentCleanup: expectedContentCleanup,
         },
         "triggering_native_download"
       );
@@ -908,6 +943,14 @@ async function processExportItem(job, itemIndex) {
       });
       if (!extracted?.ok || !extracted.doc?.nativeSaveTriggered) {
         throw new Error(extracted?.error || "Сайт не запустил нативное сохранение");
+      }
+      if (
+        job.format === "docx" &&
+        (extracted.doc.contentCleanup?.consultantDataRemoved !== true ||
+          extracted.doc.contentCleanup?.pageNumberPreserved !== true ||
+          extracted.doc.contentCleanup?.documentBodyPreserved !== true)
+      ) {
+        throw new Error("Word-файл не подтвердил локальную очистку");
       }
       const downloadId = await waitForCurrentDownloadId(
         job.id,
@@ -922,6 +965,7 @@ async function processExportItem(job, itemIndex) {
         downloadId,
         filename: downloadBasename(completed, expectedFilename),
         native: true,
+        contentCleanup: extracted.doc.contentCleanup || expectedContentCleanup,
       };
     }
 

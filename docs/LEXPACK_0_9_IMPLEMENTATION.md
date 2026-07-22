@@ -46,6 +46,8 @@ source adapter -> session collection -> metadata normalization -> export plan
 - `export-plan` — выбор, экспортная нумерация, preview и внутренние коллизии;
 - `report-schema` — единая проекция report schema v2;
 - `history-storage` — privacy-aware записи `off` / `safe` / `detailed`;
+- `docx-sanitizer` — ограниченный локальный ZIP/OOXML parser и очистка Word;
+- `docx-cleaner-main` — перехват только явно активированного DOCX blob до загрузки;
 - `planner/` — отдельная extension page для списка до 200 строк.
 
 Planner передаёт готовый план service worker. Worker повторно валидирует его,
@@ -88,6 +90,15 @@ folderTemplate, collisionPolicy и timestamps. Задача хранит immutab
 folder/name/path, expected filename, warnings, cleanup rules и internal
 collision resolution.
 
+Для DOCX worker заранее устанавливает main-world bridge в целевую вкладку и
+требует закрытое подтверждение очистки до признания экспорта успешным. Bridge
+активен только в коротком окне после команды LexPack, принимает blob до 64 МБ и
+при любой ошибке блокирует исходную загрузку. Санитайзер сохраняет
+`word/document.xml`, очищает шапки, заменяет подвалы на `PAGE/NUMPAGES`, очищает
+brand-bearing `docProps`, удаляет thumbnail и только осиротевшие медиа
+колонтитулов. Результат записывается в item/report как три логических признака
+`contentCleanup`, без байтов или текста документа.
+
 Report schema v2 сохраняет совместимые `summary`, `index`, `title`, `filename`
 и `sourceUrl`, а также version/variant, profile snapshot, collection metadata,
 selected count, result counters, закрытые download diagnostics и полный planned
@@ -107,8 +118,9 @@ vs actual результат каждой позиции. Browser download ids, 
   вариантов; абсолютные пути, traversal, URL, drive letters и UNC запрещены.
 - Внутренние коллизии известны заранее; коллизия с уже существующим файлом
   разрешается browser uniquify и отражается как различие expected/actual.
-- LexPack не редактирует DOCX, PDF или RTF, не выполняет OCR и не объединяет
-  файлы.
+- LexPack целево очищает только DOCX-колонтитулы и свойства КонсультантПлюс;
+  основная XML-часть Word не переписывается. PDF/RTF не редактируются, OCR и
+  объединение файлов не выполняются.
 
 ## Автоматическая проверка инкремента
 
@@ -116,6 +128,9 @@ vs actual результат каждой позиции. Browser download ids, 
   privacy-aware history с byte budget и report v2;
 - browser tests покрывают сбор/переход в planner, выбор 2-й и 5-й строк,
   профили, preview, detailed retry, reset и полный virtualized list из 65 строк;
+- отдельные unit/browser tests проверяют stored/deflated DOCX, неизменность
+  `word/document.xml`, удаление brand parts, сохранение `PAGE/NUMPAGES` и
+  фактическую загрузку только очищенного blob;
 - отдельный lifecycle test останавливает и повторно запускает MV3 service worker,
   проверяет сохранение planned path/snapshot, читает фактический report v2 с
   диска и проверяет safe history в persistent storage;
@@ -128,8 +143,10 @@ vs actual результат каждой позиции. Browser download ids, 
 1. Обновить 0.8.4 с нестандартными format/folder и проверить миграцию default.
 2. Собрать пять документов, выбрать 2-й и 5-й, сверить индексы и preview.
 3. Проверить nested folder, внутреннюю и внешнюю коллизию для TXT и DOCX.
-4. Перезапустить service worker во время нативной серии и сверить planned paths.
-5. Проверить safe/detailed/off history, retry preview и полный reset.
+4. Открыть многостраничный DOCX: данных КонсультантПлюс в колонтитулах и
+   свойствах нет, основной текст на месте, `Страница N из M` работает.
+5. Перезапустить service worker во время нативной серии и сверить planned paths.
+6. Проверить safe/detailed/off history, retry preview и полный reset.
 
 ### Chromium-Gost
 

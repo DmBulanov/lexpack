@@ -203,7 +203,10 @@ export async function checkBuiltVariant(id) {
     }
   }
   if (manifest.manifest_version !== 3) throw new Error(`${id}: manifest_version must be 3`);
-  if (!manifest.content_scripts?.[0]?.js?.includes("shared/variant-config.js")) {
+  const isolatedContentScript = manifest.content_scripts?.find((entry) =>
+    entry.js?.includes("shared/variant-config.js")
+  );
+  if (isolatedContentScript?.js?.[0] !== "shared/variant-config.js") {
     throw new Error(`${id}: variant config must load before shared runtime code`);
   }
   for (const reference of manifestReferences(manifest)) {

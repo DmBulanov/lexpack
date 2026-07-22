@@ -245,7 +245,7 @@ test("planned TXT export survives an MV3 worker restart and writes report v2 plu
 
   const report = JSON.parse(await fs.readFile(reportDownload.filename, "utf8"));
   assert.equal(report.schemaVersion, 2);
-  assert.equal(report.extensionVersion, "0.9.0-chrome");
+  assert.equal(report.extensionVersion, "0.9.1-chrome");
   assert.equal(report.variant, "chrome");
   assert.equal(report.jobId, beforeRestart.jobId);
   assert.equal(report.query, null);

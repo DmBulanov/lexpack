@@ -155,6 +155,23 @@ test("both variants route files through Chromium download APIs", () => {
   assert.match(source, /chrome\.downloads\.download/);
 });
 
+test("Word downloads install the bounded main-world cleaner and require its confirmation", () => {
+  assert.match(source, /const DOCX_MAIN_WORLD_FILES = \[/);
+  assert.match(source, /"shared\/docx-sanitizer\.js"/);
+  assert.match(source, /"content\/docx-cleaner-main\.js"/);
+  assert.match(
+    source,
+    /async function ensureDocxCleaner[\s\S]{0,500}world: "MAIN"/
+  );
+  assert.match(
+    source,
+    /message\?\.type === "EXTRACT_DOCUMENT"[\s\S]{0,220}ensureDocxCleaner\(tabId\)/
+  );
+  assert.match(source, /extracted\.doc\.contentCleanup\?\.consultantDataRemoved !== true/);
+  assert.match(source, /extracted\.doc\.contentCleanup\?\.pageNumberPreserved !== true/);
+  assert.match(source, /extracted\.doc\.contentCleanup\?\.documentBodyPreserved !== true/);
+});
+
 test("download diagnostics are closed, sanitized in reports, and exposed safely", () => {
   assert.match(source, /consNativeDownloadDecision/);
   assert.match(source, /consAppendDownloadDiagnostic/);

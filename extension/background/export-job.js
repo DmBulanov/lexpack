@@ -69,6 +69,7 @@
         filename: null,
         actualFilename: null,
         downloadId: null,
+        contentCleanup: null,
         startedAt: null,
         finishedAt: null,
       };
@@ -160,6 +161,7 @@
       downloadKind: null,
       downloadStartedAt: null,
       nativeMatchCode: null,
+      contentCleanup: null,
     };
     job.updatedAt = new Date(now).toISOString();
     return job;
@@ -174,6 +176,7 @@
     item.actualFilename = details.filename || details.actualFilename || item.actualFilename || null;
     item.filename = item.actualFilename;
     item.downloadId = details.downloadId ?? item.downloadId ?? null;
+    item.contentCleanup = cloneValue(details.contentCleanup, item.contentCleanup);
     item.finishedAt = new Date(now).toISOString();
     if (
       item.actualFilename &&

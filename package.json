@@ -1,6 +1,6 @@
 {
   "name": "lexpack",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "description": "Controlled Chrome and Chromium-Gost builds of LexPack.",
   "license": "UNLICENSED",

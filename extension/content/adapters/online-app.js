@@ -24,6 +24,9 @@
   };
 
   const NATIVE_FORMATS = new Set(Object.keys(FORMAT_MATCH));
+  const DOCX_CLEANER_CHANNEL = "LEXPACK_DOCX_CLEANER_V1";
+  const DOCX_CLEANER_ARM_TIMEOUT_MS = 2000;
+  const DOCX_CLEANER_COMPLETION_TIMEOUT_MS = 40000;
 
   const SEARCH_SCOPES = Object.freeze(["all", "practice"]);
   const FULL_RESULTS_LINK_SELECTOR = ".x-pages-search-plus-results-link";
@@ -47,6 +50,98 @@
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
+  }
+
+  function docxCleanerRequestId() {
+    const random = new Uint32Array(2);
+    crypto.getRandomValues(random);
+    return `${Date.now()}-${random[0].toString(16)}${random[1].toString(16)}`;
+  }
+
+  async function triggerCleanDocxDownload(trigger) {
+    const requestId = docxCleanerRequestId();
+    let phase = "arming";
+    let armTimer = null;
+    let completionTimer = null;
+    let resolveArmed;
+    let rejectArmed;
+    let resolveCompleted;
+    let rejectCompleted;
+    const armed = new Promise((resolve, reject) => {
+      resolveArmed = resolve;
+      rejectArmed = reject;
+    });
+    const completed = new Promise((resolve, reject) => {
+      resolveCompleted = resolve;
+      rejectCompleted = reject;
+    });
+    completed.catch(() => {});
+
+    const onMessage = (event) => {
+      if (event.source !== window || event.origin !== location.origin) return;
+      const message = event.data;
+      if (
+        message?.channel !== DOCX_CLEANER_CHANNEL ||
+        message.requestId !== requestId
+      ) {
+        return;
+      }
+      if (message.type === "ARMED" && phase === "arming") {
+        phase = "armed";
+        clearTimeout(armTimer);
+        resolveArmed();
+      } else if (message.type === "CLEANED" && phase === "armed") {
+        phase = "completed";
+        clearTimeout(completionTimer);
+        resolveCompleted(message.stats || {});
+      } else if (message.type === "ERROR") {
+        const error = adapterError(
+          "DOCX_CLEANUP_FAILED",
+          String(message.error || "Не удалось очистить Word-файл").slice(0, 500)
+        );
+        if (phase === "arming") rejectArmed(error);
+        else rejectCompleted(error);
+        phase = "failed";
+      }
+    };
+
+    addEventListener("message", onMessage);
+    armTimer = setTimeout(() => {
+      rejectArmed(
+        adapterError(
+          "DOCX_CLEANER_UNAVAILABLE",
+          "Модуль локальной очистки Word недоступен; исходный файл не сохранён"
+        )
+      );
+    }, DOCX_CLEANER_ARM_TIMEOUT_MS);
+    window.postMessage(
+      { channel: DOCX_CLEANER_CHANNEL, type: "ARM", requestId },
+      location.origin
+    );
+
+    try {
+      await armed;
+      completionTimer = setTimeout(() => {
+        rejectCompleted(
+          adapterError(
+            "DOCX_CLEANUP_TIMEOUT",
+            "Очистка Word-файла не завершилась за 40 секунд; исходный файл не сохранён"
+          )
+        );
+      }, DOCX_CLEANER_COMPLETION_TIMEOUT_MS);
+      await trigger();
+      return await completed;
+    } catch (error) {
+      window.postMessage(
+        { channel: DOCX_CLEANER_CHANNEL, type: "DISARM", requestId },
+        location.origin
+      );
+      throw error;
+    } finally {
+      clearTimeout(armTimer);
+      clearTimeout(completionTimer);
+      removeEventListener("message", onMessage);
+    }
   }
 
   function normalizedText(value) {
@@ -857,21 +952,31 @@
       const format = (options.format || "docx").toLowerCase();
       const title = this._docTitle();
 
-      // Native KP export (triggers browser download)
+      // Word export is intercepted in the page's main world, sanitized locally,
+      // and only then handed to the browser download pipeline.
       if (format === "docx" || format === "word") {
         const wordBtn = document.querySelector("button.word");
-        if (wordBtn) {
-          wordBtn.click();
-          await sleep(800);
-          return {
-            title,
-            text: "",
-            html: "",
-            nativeSaveTriggered: true,
-            url: location.href,
-            format: "docx",
-          };
-        }
+        await triggerCleanDocxDownload(async () => {
+          if (wordBtn) {
+            wordBtn.click();
+            await sleep(800);
+          } else {
+            await this.nativeSave("docx");
+          }
+        });
+        return {
+          title,
+          text: "",
+          html: "",
+          nativeSaveTriggered: true,
+          contentCleanup: {
+            consultantDataRemoved: true,
+            pageNumberPreserved: true,
+            documentBodyPreserved: true,
+          },
+          url: location.href,
+          format: "docx",
+        };
       }
 
       if (NATIVE_FORMATS.has(format) && format !== "html" && format !== "txt") {

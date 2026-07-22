@@ -70,6 +70,15 @@
     return { folder: values(cleanup?.folder), filename: values(cleanup?.filename) };
   }
 
+  function safeContentCleanup(cleanup) {
+    if (!cleanup || typeof cleanup !== "object") return null;
+    return {
+      consultantDataRemoved: cleanup.consultantDataRemoved === true,
+      pageNumberPreserved: cleanup.pageNumberPreserved === true,
+      documentBodyPreserved: cleanup.documentBodyPreserved === true,
+    };
+  }
+
   function safeProfile(profile) {
     return {
       schemaVersion: 1,
@@ -126,6 +135,7 @@
       error: cleanText(item?.error, 1000) || null,
       warnings: safeWarnings(item?.warnings),
       cleanupRulesApplied: safeCleanup(item?.cleanupRulesApplied),
+      contentCleanup: safeContentCleanup(item?.contentCleanup),
       collisionResolution: {
         type: cleanText(collision.type, 40) || "none",
         internal: collision.internal === true,

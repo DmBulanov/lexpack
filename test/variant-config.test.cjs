@@ -10,14 +10,14 @@ const baseManifest = require(path.join(root, "extension/manifest.base.json"));
 
 test("Chrome and Chromium-Gost are explicit independently versioned variants", () => {
   assert.equal(chrome.id, "chrome");
-  assert.equal(chrome.manifest.versionName, "0.9.0-chrome");
+  assert.equal(chrome.manifest.versionName, "0.9.1-chrome");
   assert.match(chrome.manifest.name, /\(Chrome\)$/);
-  assert.equal(chrome.archiveName, "lexpack-chrome-0.9.0.zip");
+  assert.equal(chrome.archiveName, "lexpack-chrome-0.9.1.zip");
 
   assert.equal(gost.id, "chromium-gost");
-  assert.equal(gost.manifest.versionName, "0.9.0-gost");
+  assert.equal(gost.manifest.versionName, "0.9.1-gost");
   assert.match(gost.manifest.name, /\(Chromium-Gost\)$/);
-  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.9.0.zip");
+  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.9.1.zip");
 });
 
 test("only Chromium-Gost enables the slower guarded native-download policy", () => {
@@ -45,8 +45,20 @@ test("the base manifest loads generated variant configuration first", () => {
   assert.equal(baseManifest.manifest_version, 3);
   assert.equal(baseManifest.name, undefined);
   assert.equal(baseManifest.version, undefined);
+  const mainWorldCleaner = baseManifest.content_scripts.find(
+    (entry) => entry.world === "MAIN"
+  );
+  assert.deepEqual(mainWorldCleaner.matches, ["https://online.consultant.ru/*"]);
+  assert.equal(mainWorldCleaner.run_at, "document_start");
+  assert.deepEqual(mainWorldCleaner.js, [
+    "shared/docx-sanitizer.js",
+    "content/docx-cleaner-main.js",
+  ]);
+  const isolatedContentScript = baseManifest.content_scripts.find((entry) =>
+    entry.js.includes("shared/variant-config.js")
+  );
   assert.equal(
-    baseManifest.content_scripts[0].js[0],
+    isolatedContentScript.js[0],
     "shared/variant-config.js"
   );
   assert.equal(fs.existsSync(path.join(root, "extension/manifest.json")), false);

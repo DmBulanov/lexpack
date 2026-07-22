@@ -108,7 +108,20 @@ test("job progress counts processed, completed, and failed items consistently", 
   consMarkItemStarted(job, 0);
   assert.equal(job.items[0].attempts, 1);
   assert.equal(job.current.itemIndex, 0);
-  consMarkItemFinished(job, 0, "completed", { filename: "01 - Первый.docx", downloadId: 10 });
+  consMarkItemFinished(job, 0, "completed", {
+    filename: "01 - Первый.docx",
+    downloadId: 10,
+    contentCleanup: {
+      consultantDataRemoved: true,
+      pageNumberPreserved: true,
+      documentBodyPreserved: true,
+    },
+  });
+  assert.deepEqual(job.items[0].contentCleanup, {
+    consultantDataRemoved: true,
+    pageNumberPreserved: true,
+    documentBodyPreserved: true,
+  });
   consMarkItemStarted(job, 1);
   consMarkItemFinished(job, 1, "failed", { error: "NETWORK_TIMEOUT" });
 
