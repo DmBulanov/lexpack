@@ -14,8 +14,8 @@
 
 | Вариант | Версия | Среда | Нативные загрузки |
 |---|---:|---|---|
-| Chrome | `0.9.1-chrome` | Google Chrome 120+ | Обычная скорость, одна попытка |
-| Chromium-Gost | `0.9.1-gost` | Chromium-Gost 143+ | Стабилизация, пауза между актами, поздняя проверка и одна повторная попытка |
+| Chrome | `0.9.2-chrome` | Google Chrome 120+ | Обычная скорость, одна попытка |
+| Chromium-Gost | `0.9.2-gost` | Chromium-Gost 143+ | Стабилизация, пауза между актами, поздняя проверка и одна повторная попытка |
 
 Название браузера отображается в карточке расширения и popup. В одном профиле одного браузера должна быть включена только одна копия LexPack.
 
@@ -42,8 +42,8 @@
 
 После `npm run package` создаются:
 
-- `dist/lexpack-chrome-0.9.1.zip`;
-- `dist/lexpack-chromium-gost-0.9.1.zip`;
+- `dist/lexpack-chrome-0.9.2.zip`;
+- `dist/lexpack-chromium-gost-0.9.2.zip`;
 - `dist/release-index.json`;
 - `dist/SHA256SUMS`.
 

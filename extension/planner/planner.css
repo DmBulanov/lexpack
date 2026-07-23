@@ -103,6 +103,17 @@ tr.unselected { color: #778196; background: #fafbfc; }
   box-shadow: 0 -5px 20px rgba(22, 38, 63, 0.1);
 }
 .launchbar span { display: block; margin-top: 3px; color: #657086; font-size: 13px; }
+.author-credit {
+  margin: 6px 0 0;
+  color: #7a8699;
+  font-size: 12px;
+}
+.author-credit a {
+  color: #274d82;
+  font-weight: 700;
+  text-decoration: none;
+}
+.author-credit a:hover { text-decoration: underline; }
 
 @media (max-width: 1050px) {
   .profile-grid { grid-template-columns: 1fr 1fr; }

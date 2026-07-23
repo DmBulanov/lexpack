@@ -133,6 +133,9 @@ test("popup uses concise user-facing actions and keeps support tools collapsed",
   assert.match(html, /Скопировать диагностику/);
   assert.match(html, /Сбросить настройки и историю/);
   assert.match(html, /Подпапка для документов и отчёта/);
+  assert.match(html, /class="author-credit"/);
+  assert.match(html, /https:\/\/t\.me\/Dmitry_Bulanov/);
+  assert.match(html, /@Dmitry_Bulanov/);
   assert.match(html, /Основную папку и запрос места задаёт\s+браузер/);
   assert.match(html, /Настройки загрузок Chrome/);
   assert.doesNotMatch(html, /Адаптер:|Страница:|В списке:/);

@@ -6,11 +6,11 @@
     "settingsLabel": "Настройки загрузок Chromium-Gost",
     "settingsUrl": "chrome://settings/downloads"
   },
-  "archiveName": "lexpack-chromium-gost-0.9.1.zip",
+  "archiveName": "lexpack-chromium-gost-0.9.2.zip",
   "manifest": {
     "name": "LexPack — КонсультантПлюс (Chromium-Gost)",
-    "version": "0.9.1",
-    "versionName": "0.9.1-gost",
+    "version": "0.9.2",
+    "versionName": "0.9.2-gost",
     "minimumChromeVersion": "143",
     "description": "Отдельная сборка LexPack для Chromium-Gost: поиск и устойчивое массовое сохранение документов КонсультантПлюс.",
     "actionTitle": "LexPack Chromium-Gost"

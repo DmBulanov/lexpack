@@ -14,7 +14,7 @@ function job(id = "job-1") {
     id,
     startedAt: "2026-07-21T10:00:00.000Z",
     finishedAt: "2026-07-21T10:01:00.000Z",
-    extensionVersion: "0.9.1-chrome",
+    extensionVersion: "0.9.2-chrome",
     variant: "chrome",
     status: "done",
     adapter: "online-app",

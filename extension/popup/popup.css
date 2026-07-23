@@ -367,6 +367,23 @@ summary:focus-visible {
   display: none;
 }
 
+.author-credit {
+  margin: 4px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.author-credit a {
+  color: #1f4b7a;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.author-credit a:hover {
+  text-decoration: underline;
+}
+
 button.linkish {
   display: block;
   margin: 7px 0 0;

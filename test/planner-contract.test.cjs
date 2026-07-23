@@ -43,6 +43,9 @@ test("history modes disclose detailed storage and retries return to preview", ()
   assert.match(html, /value="off"/);
   assert.match(html, /value="safe"/);
   assert.match(html, /value="detailed"/);
+  assert.match(html, /class="author-credit"/);
+  assert.match(html, /https:\/\/t\.me\/Dmitry_Bulanov/);
+  assert.match(html, /@Dmitry_Bulanov/);
   assert.match(source, /Подробная история будет хранить/);
   assert.match(source, /safeSourceUrl/);
   assert.match(source, /\["failed", "unconfirmed"\]/);
