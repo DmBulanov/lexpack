@@ -1,31 +1,26 @@
-# LexPack
-
-Chrome extension / LexPack project files.
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Editors
-.vscode/
-.idea/
-*.swp
-
+# LexPack
 # Local / secrets
-.env
-*.pem
-
 # Logs & caches
-logs/
+# OS
+# Personal downloads accidentally copied here
 *.log
+*.pem
+*.swp
+.DS_Store
+.env
+.idea/
 .pytest_cache/
+.vscode/
+Chrome extension / LexPack project files.
+ConsDownload/
+ConsExport/
+LexPack/
+Thumbs.db
 __pycache__/
-node_modules/
 build/
 dist/
-
-# Personal downloads accidentally copied here
-ConsExport/
-ConsDownload/
-LexPack/
 export_*.csv
+logs/
+node_modules/
