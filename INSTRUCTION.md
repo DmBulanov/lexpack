@@ -2,7 +2,7 @@
 
 LexPack помогает найти практику в браузерной версии КонсультантПлюс и сохранить документы без ручной обработки каждого результата.
 
-Рабочие релизы: **LexPack 0.9.3-chrome для Google Chrome** и **LexPack 0.9.3-gost для Chromium-Gost**.
+Рабочие релизы: **LexPack 0.9.4-chrome для Google Chrome** и **LexPack 0.9.4-gost для Chromium-Gost**.
 
 Основной рабочий сценарий — авторизованный `online.consultant.ru`. Локальная программа `cons.exe` не поддерживается.
 
@@ -16,7 +16,7 @@ LexPack помогает найти практику в браузерной в�
 
 ## Установка Chrome или Chromium-Gost
 
-1. Получите нужный архив: `lexpack-chrome-0.9.3.zip` для Chrome или `lexpack-chromium-gost-0.9.3.zip` для Chromium-Gost. Распакуйте его в постоянную папку `LexPack-Chrome` либо `LexPack-Chromium-Gost`.
+1. Получите нужный архив: `lexpack-chrome-0.9.4.zip` для Chrome или `lexpack-chromium-gost-0.9.4.zip` для Chromium-Gost. Распакуйте его в постоянную папку `LexPack-Chrome` либо `LexPack-Chromium-Gost`.
 2. Откройте `chrome://extensions`.
 3. Включите **«Режим разработчика»**.
 4. Отключите или удалите остальные копии LexPack: одновременно должна работать только одна сборка.

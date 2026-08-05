@@ -242,6 +242,8 @@ test("search text is never persisted and legacy saved-query keys are removed", (
 test("popup caches and restores the current collection through session-backed messages", () => {
   assert.match(source, /type: "CACHE_SEARCH_COLLECTION"/);
   assert.match(source, /type: "GET_SEARCH_COLLECTION"/);
+  assert.match(source, /collectionIdentity: response\.collectionIdentity/);
+  assert.match(source, /collectionIdentity: ping\.collectionIdentity/);
   assert.match(source, /async function restoreCollection\(ping\)/);
   assert.match(source, /cache\?\.status !== "ready"/);
   assert.match(source, /applyItems\(cache\.items \|\| \[\]/);

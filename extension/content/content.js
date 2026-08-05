@@ -4,6 +4,8 @@
 (function () {
   if (globalThis.__consExportContentInstalled) return;
   globalThis.__consExportContentInstalled = true;
+  const CONTENT_DOCUMENT_ID =
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
 
   function pickAdapter() {
     const adapters = globalThis.ConsAdapters || {};
@@ -26,6 +28,22 @@
 
   function errorResponse(code, error) {
     return { ok: false, code, error };
+  }
+
+  function collectionIdentity(adapter, capabilities) {
+    if (
+      !capabilities.collectList ||
+      typeof adapter.getCollectionIdentity !== "function"
+    ) {
+      return null;
+    }
+    const identity = adapter.getCollectionIdentity();
+    if (!identity?.contextSignature) return null;
+    return {
+      documentId: CONTENT_DOCUMENT_ID,
+      contextSignature: String(identity.contextSignature),
+      total: Number.isInteger(identity.total) ? identity.total : null,
+    };
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -61,6 +79,7 @@
               capabilities.documentReady && typeof adapter.getDocumentTitle === "function"
                 ? adapter.getDocumentTitle()
                 : "",
+            collectionIdentity: collectionIdentity(adapter, capabilities),
             url: location.href,
             title: document.title,
           };
@@ -109,6 +128,7 @@
             truncatedByLimit: collectionMeta.truncatedByLimit === true,
             incomplete: collectionMeta.incomplete === true,
             reachedEnd: collectionMeta.reachedEnd === true,
+            collectionIdentity: collectionIdentity(adapter, capabilities),
           };
         }
 
