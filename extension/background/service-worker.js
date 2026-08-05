@@ -28,6 +28,10 @@ const NATIVE_LATE_RECOVERY_GRACE_MS = NATIVE_DOWNLOAD_CONFIG.lateRecoveryGraceMs
 const NATIVE_INTER_ITEM_DELAY_MS = NATIVE_DOWNLOAD_CONFIG.interItemDelayMs;
 const POLL_MS = 400;
 const DOWNLOAD_UNCONFIRMED_CODE = "DOWNLOAD_UNCONFIRMED";
+const RETRYABLE_NATIVE_START_CODES = new Set([
+  DOWNLOAD_UNCONFIRMED_CODE,
+  "DOCX_CLEANUP_TIMEOUT",
+]);
 const CONTENT_SCRIPT_FILES = [
   "shared/variant-config.js",
   "shared/filename.js",
@@ -36,6 +40,10 @@ const CONTENT_SCRIPT_FILES = [
   "content/adapters/online-app.js",
   "content/content.js",
 ];
+const DOCX_MAIN_WORLD_FILES = [
+  "shared/docx-sanitizer.js",
+  "content/docx-cleaner-main.js",
+];
 
 let jobMutationQueue = Promise.resolve();
 let runnerPromise = null;
@@ -43,6 +51,7 @@ let offscreenCreating = null;
 let jobStartInProgress = false;
 let searchFlowInProgress = false;
 const contentInjectionByTab = new Map();
+const docxInjectionByTab = new Map();
 const NATIVE_DIAGNOSTIC_RANK = Object.freeze({
   NM_REFERRER: 1,
   NM_FILENAME: 2,
@@ -80,6 +89,12 @@ function errorText(error) {
   return String(error?.message || error || "Неизвестная ошибка");
 }
 
+function responseError(response, fallback) {
+  const error = new Error(response?.error || fallback);
+  if (response?.code) error.code = String(response.code);
+  return error;
+}
+
 function unconfirmedDownloadError(message) {
   const error = new Error(message);
   error.code = DOWNLOAD_UNCONFIRMED_CODE;
@@ -92,11 +107,18 @@ function isUnconfirmedDownloadError(error) {
 
 function isRetryableNativeStartTimeout(error, job, itemIndex) {
   return Boolean(
-    error?.code === DOWNLOAD_UNCONFIRMED_CODE &&
+    RETRYABLE_NATIVE_START_CODES.has(error?.code) &&
       job?.current?.itemIndex === itemIndex &&
       job.current.downloadKind === "native" &&
       job.current.downloadId == null
   );
+}
+
+function nativeRetryExhaustedMessage(error, attempts) {
+  if (error?.code === "DOCX_CLEANUP_TIMEOUT") {
+    return `После ${attempts} попыток подготовка и локальная очистка Word-файла не завершились; исходный файл не сохранён`;
+  }
+  return `После ${attempts} попыток расширение не подтвердило начало загрузки; файл мог сохраниться в «Загрузки»`;
 }
 
 async function readJob() {
@@ -595,14 +617,35 @@ async function ensureContentScripts(tabId) {
   return contentInjectionByTab.get(tabId);
 }
 
+async function ensureDocxCleaner(tabId) {
+  if (!docxInjectionByTab.has(tabId)) {
+    const injection = chrome.scripting
+      .executeScript({
+        target: { tabId },
+        files: DOCX_MAIN_WORLD_FILES,
+        world: "MAIN",
+      })
+      .finally(() => docxInjectionByTab.delete(tabId));
+    docxInjectionByTab.set(tabId, injection);
+  }
+  return docxInjectionByTab.get(tabId);
+}
+
 async function sendToTab(tabId, message) {
+  if (
+    message?.type === "EXTRACT_DOCUMENT" &&
+    ["docx", "word"].includes(String(message.format || "").toLowerCase())
+  ) {
+    await ensureDocxCleaner(tabId);
+  }
   try {
-    return await chrome.tabs.sendMessage(tabId, message);
+    const response = await chrome.tabs.sendMessage(tabId, message);
+    if (response !== undefined && response !== null) return response;
   } catch (error) {
     if (!isMissingContentReceiver(error)) throw error;
-    await ensureContentScripts(tabId);
-    return chrome.tabs.sendMessage(tabId, message);
   }
+  await ensureContentScripts(tabId);
+  return chrome.tabs.sendMessage(tabId, message);
 }
 
 async function waitContentReady(tabId, jobId = null) {
@@ -707,6 +750,7 @@ async function resumeExistingDownload(job) {
     filename: downloadBasename(completed, current.expectedFilename),
     completed,
     native: current.downloadKind === "native",
+    contentCleanup: current.contentCleanup || null,
   };
 }
 
@@ -791,6 +835,14 @@ async function processExportItem(job, itemIndex) {
       const settled = await waitForActiveJobDelay(job.id, NATIVE_CONTROL_SETTLE_MS);
       if (!settled) await assertJobCanContinue(job.id);
       const startedAt = Date.now();
+      const expectedContentCleanup =
+        job.format === "docx"
+          ? {
+              consultantDataRemoved: true,
+              pageNumberPreserved: true,
+              documentBodyPreserved: true,
+            }
+          : null;
       await updateCurrent(
         job.id,
         {
@@ -799,6 +851,7 @@ async function processExportItem(job, itemIndex) {
           expectedFilename,
           sourceUrl: url,
           extensionId: chrome.runtime.id,
+          contentCleanup: expectedContentCleanup,
         },
         "triggering_native_download"
       );
@@ -807,8 +860,19 @@ async function processExportItem(job, itemIndex) {
         type: "EXTRACT_DOCUMENT",
         format: job.format,
       });
-      if (!extracted?.ok || !extracted.doc?.nativeSaveTriggered) {
-        throw new Error(extracted?.error || "Сайт не запустил нативное сохранение");
+      if (!extracted?.ok) {
+        throw responseError(extracted, "Сайт не запустил нативное сохранение");
+      }
+      if (!extracted.doc?.nativeSaveTriggered) {
+        throw new Error("Сайт не запустил нативное сохранение");
+      }
+      if (
+        job.format === "docx" &&
+        (extracted.doc.contentCleanup?.consultantDataRemoved !== true ||
+          extracted.doc.contentCleanup?.pageNumberPreserved !== true ||
+          extracted.doc.contentCleanup?.documentBodyPreserved !== true)
+      ) {
+        throw new Error("Word-файл не подтвердил локальную очистку");
       }
       const downloadId = await waitForCurrentDownloadId(
         job.id,
@@ -823,6 +887,7 @@ async function processExportItem(job, itemIndex) {
         downloadId,
         filename: downloadBasename(completed, expectedFilename),
         native: true,
+        contentCleanup: extracted.doc.contentCleanup || expectedContentCleanup,
       };
     }
 
@@ -830,8 +895,11 @@ async function processExportItem(job, itemIndex) {
       type: "EXTRACT_DOCUMENT",
       format: job.format,
     });
-    if (!extracted?.ok || !extracted.doc) {
-      throw new Error(extracted?.error || "Не удалось извлечь документ");
+    if (!extracted?.ok) {
+      throw responseError(extracted, "Не удалось извлечь документ");
+    }
+    if (!extracted.doc) {
+      throw new Error("Не удалось извлечь документ");
     }
     if (extracted.doc.nativeSaveTriggered) {
       throw new Error("Адаптер неожиданно запустил нативный экспорт");
@@ -912,6 +980,7 @@ function serializeJobReport(job) {
         status: item.status,
         filename: item.filename,
         error: item.error,
+        contentCleanup: item.contentCleanup || null,
       })),
     },
     null,
@@ -1196,7 +1265,7 @@ async function runStoredJob() {
           attempts >= NATIVE_DOWNLOAD_MAX_ATTEMPTS &&
           isRetryableNativeStartTimeout(error, draft, itemIndex);
         const message = retryExhausted
-          ? `После ${NATIVE_DOWNLOAD_MAX_ATTEMPTS} попыток расширение не подтвердило начало загрузки; файл мог сохраниться в «Загрузки»`
+          ? nativeRetryExhaustedMessage(error, NATIVE_DOWNLOAD_MAX_ATTEMPTS)
           : errorText(error);
         consMarkItemFinished(draft, itemIndex, status, { error: message });
         const prefix = status === "unconfirmed" ? "ПРОВЕРИТЬ" : "ERR";

@@ -26,6 +26,17 @@
   "content_scripts": [
     {
       "matches": [
+        "https://online.consultant.ru/*"
+      ],
+      "js": [
+        "shared/docx-sanitizer.js",
+        "content/docx-cleaner-main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
         "https://consultant.ru/*",
         "https://*.consultant.ru/*"
       ],

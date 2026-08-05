@@ -12,6 +12,14 @@ const html = fs.readFileSync(
   "utf8"
 );
 
+test("the simplified 0.8 line starts downloads directly and has no planner page", () => {
+  assert.doesNotMatch(html, /planner|Настроить выгрузку/i);
+  assert.doesNotMatch(source, /planner|OPEN_PLANNER/i);
+  assert.match(source, /type: "START_TAB_EXPORT"/);
+  assert.match(html, /Скачать открытый документ/);
+  assert.match(source, /`Скачать \$\{selected\} \$\{documentWord\(selected\)\}`/);
+});
+
 test("cached result provenance is exported with the cached list", () => {
   assert.match(source, /let cachedQuery = ""/);
   assert.match(source, /let cachedScope = "current-list"/);

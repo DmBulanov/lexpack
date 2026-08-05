@@ -109,6 +109,19 @@ test("export waits for the document pane and native controls", () => {
   );
 });
 
+test("Word export injects and requires the local DOCX cleaner", () => {
+  assert.match(source, /const DOCX_MAIN_WORLD_FILES/);
+  assert.match(source, /"shared\/docx-sanitizer\.js"/);
+  assert.match(source, /"content\/docx-cleaner-main\.js"/);
+  assert.match(source, /world: "MAIN"/);
+  assert.match(source, /await ensureDocxCleaner\(tabId\)/);
+  assert.match(source, /consultantDataRemoved: true/);
+  assert.match(source, /pageNumberPreserved: true/);
+  assert.match(source, /documentBodyPreserved: true/);
+  assert.match(source, /Word-файл не подтвердил локальную очистку/);
+  assert.match(source, /contentCleanup: item\.contentCleanup \|\| null/);
+});
+
 test("download completion and native filename determination are explicit", () => {
   assert.match(source, /chrome\.downloads\.onDeterminingFilename\.addListener/);
   assert.match(source, /chrome\.downloads\.onCreated\.addListener/);
@@ -137,6 +150,9 @@ test("native download behavior is controlled by the selected build variant", () 
   assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.controlSettleMs/);
   assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.lateRecoveryGraceMs/);
   assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.interItemDelayMs/);
+  assert.match(source, /RETRYABLE_NATIVE_START_CODES/);
+  assert.match(source, /"DOCX_CLEANUP_TIMEOUT"/);
+  assert.match(source, /throw responseError\(extracted/);
   assert.match(source, /function isRetryableNativeStartTimeout/);
   assert.match(source, /recoverTimedOutNativeDownload/);
   assert.match(source, /consAppendDownloadDiagnostic\(draft, "NM_RETRY"\)/);
@@ -146,7 +162,8 @@ test("native download behavior is controlled by the selected build variant", () 
     source,
     /result\.native && itemIndex \+ 1 < job\.items\.length[\s\S]{0,180}NATIVE_INTER_ITEM_DELAY_MS/
   );
-  assert.match(source, /После \$\{NATIVE_DOWNLOAD_MAX_ATTEMPTS\} попыток/);
+  assert.match(source, /nativeRetryExhaustedMessage\(error, NATIVE_DOWNLOAD_MAX_ATTEMPTS\)/);
+  assert.match(source, /исходный файл не сохранён/);
 });
 
 test("download diagnostics are closed, separate from reports, and exposed safely", () => {

@@ -28,6 +28,7 @@
       error: null,
       filename: null,
       downloadId: null,
+      contentCleanup: null,
     }));
     return {
       version: 1,
@@ -102,6 +103,7 @@
       downloadKind: null,
       downloadStartedAt: null,
       nativeMatchCode: null,
+      contentCleanup: null,
     };
     job.updatedAt = new Date(now).toISOString();
     return job;
@@ -115,6 +117,9 @@
     item.error = details.error ? String(details.error) : null;
     item.filename = details.filename || item.filename || null;
     item.downloadId = details.downloadId ?? item.downloadId ?? null;
+    item.contentCleanup = details.contentCleanup
+      ? { ...details.contentCleanup }
+      : item.contentCleanup;
     job.nextIndex = Math.max(job.nextIndex, itemIndex + 1);
     job.phase = "queued";
     job.current = null;
