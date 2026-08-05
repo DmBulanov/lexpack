@@ -148,14 +148,20 @@
     return String(value || "").replace(/\s+/g, " ").trim();
   }
 
-  function resultSignature(items) {
-    const source = (items || []).map((item) => `${item.url}\n${item.title}`).join("\n---\n");
+  function textSignature(value) {
+    const source = String(value || "");
     let hash = 2166136261;
     for (let index = 0; index < source.length; index += 1) {
       hash ^= source.charCodeAt(index);
       hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0).toString(16);
+  }
+
+  function resultSignature(items) {
+    return textSignature(
+      (items || []).map((item) => `${item.url}\n${item.title}`).join("\n---\n")
+    );
   }
 
   function documentIdentity(rawUrl) {
@@ -567,6 +573,34 @@
       const heading = document.querySelector(".x-page-search-results-header__name");
       const label = normalizedText(heading?.innerText || heading?.textContent);
       return { key: categoryKeyForLabel(label), label };
+    },
+
+    getCollectionIdentity() {
+      if (!this.isFullResultsPage()) return null;
+      const state = this.fullResultsState();
+      const pageTitle = normalizedText(
+        document.querySelector(".x-page-search-title__page-title")?.textContent
+      );
+      const breadcrumbs = normalizedText(
+        document.querySelector(
+          ".x-page-search-breadcrumbs__balloon-content, .x-page-search-breadcrumbs"
+        )?.textContent
+      );
+      const total = Number.isInteger(state.categoryTotal)
+        ? state.categoryTotal
+        : null;
+      return {
+        contextSignature: textSignature(
+          [
+            location.href,
+            pageTitle,
+            breadcrumbs,
+            state.activeCategory || state.activeCategoryLabel || "",
+            total ?? "",
+          ].join("\n")
+        ),
+        total,
+      };
     },
 
     fullResultsState(expectedQuery = "", expectedCategory = "") {

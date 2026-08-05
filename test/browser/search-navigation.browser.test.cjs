@@ -169,6 +169,39 @@ function virtualCurrentCategoryHtml(query, total = 65) {
     </script>`;
 }
 
+function mutableCurrentCategoryHtml(query) {
+  return `<!doctype html>
+    <meta charset="utf-8">
+    <title>Изменяемая открытая подборка</title>
+    <div class="x-page-search-title__page-title">Дополнительная информация</div>
+    <div class="x-page-search-title__value"><div class="x-ellipsis__content">"${query}"</div></div>
+    <div class="x-page-search-breadcrumbs">
+      <div class="x-page-search-breadcrumbs__balloon-content"></div>
+    </div>
+    <div class="x-page-search-tree-item x-page-search-tree-item--current" data-index="2">
+      <span class="x-page-search-tree-item__name">Решения высших судов</span>
+      <span class="x-page-search-tree-item-count"></span>
+    </div>
+    <div class="x-page-search-results-header__name">Решения высших судов</div>
+    <div class="x-page-search-results-header__counter"></div>
+    <div class="x-list x-page-search-results__list"></div>
+    <script>
+      window.__setLexPackCollection = (label, total, startId) => {
+        document.querySelector('.x-page-search-breadcrumbs__balloon-content').textContent = label;
+        document.querySelector('.x-page-search-tree-item-count').textContent = String(total);
+        document.querySelector('.x-page-search-results-header__counter').textContent = '[1:' + total + ']';
+        document.querySelector('.x-page-search-results__list').innerHTML = Array.from(
+          { length: total },
+          (_, index) =>
+            '<a class="x-page-components-search-result-item__extra-title" ' +
+            'href="?req=doc&base=ARB&n=' + (startId + index) + '">' +
+            '<div class="TH">' + label + ' — документ ' + (index + 1) + '</div></a>'
+        ).join('');
+      };
+      window.__setLexPackCollection('Первая подборка', 15, 1000);
+    </script>`;
+}
+
 test("online all-scope still opens full results and deduplicates selected instances", async (t) => {
   const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "cons-export-search-flow-"));
   let context;
@@ -394,6 +427,64 @@ test("manual collection harvests the whole virtualized category selected by the 
   assert.equal(limited.truncatedByLimit, true);
   assert.equal(limited.incomplete, false);
   assert.equal(await page.locator(".x-page-search-results__list").evaluate((node) => node.scrollTop), 0);
+});
+
+test("popup refreshes a changed collection in the same tab and category", async (t) => {
+  const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "lexpack-collection-refresh-"));
+  let context;
+  t.after(async () => {
+    await context?.close();
+    await fs.rm(userDataDir, { recursive: true, force: true });
+  });
+
+  context = await chromium.launchPersistentContext(userDataDir, {
+    channel: "chromium",
+    headless: true,
+    args: [
+      `--disable-extensions-except=${extensionPath}`,
+      `--load-extension=${extensionPath}`,
+    ],
+  });
+  let [worker] = context.serviceWorkers();
+  worker ||= await context.waitForEvent("serviceworker", { timeout: 15000 });
+  const extensionId = new URL(worker.url()).hostname;
+  await context.route("https://online.consultant.ru/**", (route) =>
+    route.fulfill({
+      contentType: "text/html; charset=utf-8",
+      body: mutableCurrentCategoryHtml(SEARCH_QUERY),
+    })
+  );
+
+  const page = await context.newPage();
+  await page.goto(FULL_RESULTS_URL);
+  await page.locator(".x-page-search-results__list").waitFor();
+  const popup = await context.newPage();
+  await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+  await page.bringToFront();
+  await popup.reload();
+  await popup.waitForFunction(
+    () => document.querySelector("#btnExport")?.textContent?.includes("15 документов"),
+    undefined,
+    { timeout: 10000 }
+  );
+
+  await page.evaluate(() => {
+    window.__setLexPackCollection("Вторая подборка", 21, 2000);
+  });
+  await page.locator(".x-page-search-results-header__counter").getByText("[1:21]").waitFor();
+  await page.bringToFront();
+  await popup.reload();
+  await popup.waitForFunction(
+    () => document.querySelector("#btnExport")?.textContent?.includes("21 документ"),
+    undefined,
+    { timeout: 10000 }
+  );
+
+  assert.equal(await popup.locator("#maxItems").inputValue(), "21");
+  assert.equal(await popup.locator("#btnExport").innerText(), "Скачать 21 документ");
+  assert.match(await popup.locator("#foundSummary").innerText(), /найдено 21/i);
+  assert.doesNotMatch(await popup.locator("#log").innerText(), /Первая подборка/);
+  assert.match(await popup.locator("#log").innerText(), /Вторая подборка/);
 });
 
 test("a non-judicial full-results category is explained instead of exported", async (t) => {

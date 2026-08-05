@@ -1353,6 +1353,39 @@ function normalizedCollectionCategory(value) {
   return category || "";
 }
 
+function normalizedCollectionIdentity(value) {
+  if (!value || typeof value !== "object") return null;
+  const documentId = String(value.documentId || "").trim().slice(0, 80);
+  const contextSignature = String(value.contextSignature || "")
+    .trim()
+    .toLowerCase();
+  const hasTotal = value.total !== null && value.total !== undefined && value.total !== "";
+  const total = hasTotal ? Number(value.total) : null;
+  if (
+    !/^[a-z0-9-]{8,80}$/i.test(documentId) ||
+    !/^[a-f0-9]{1,16}$/.test(contextSignature)
+  ) {
+    return null;
+  }
+  return {
+    documentId,
+    contextSignature,
+    total: Number.isInteger(total) && total >= 0 ? total : null,
+  };
+}
+
+function collectionIdentityMatches(left, right) {
+  const expected = normalizedCollectionIdentity(left);
+  const actual = normalizedCollectionIdentity(right);
+  return Boolean(
+    expected &&
+      actual &&
+      expected.documentId === actual.documentId &&
+      expected.contextSignature === actual.contextSignature &&
+      expected.total === actual.total
+  );
+}
+
 async function persistSearchCollection(options = {}) {
   const adapter = CONS_ADAPTER_CAPABILITIES[options.adapter]
     ? options.adapter
@@ -1363,7 +1396,7 @@ async function persistSearchCollection(options = {}) {
     : [];
   const total = Number(options.total);
   const collection = {
-    version: 1,
+    version: 2,
     status: "ready",
     source,
     tabId: Number.isInteger(options.tabId) ? options.tabId : null,
@@ -1375,6 +1408,7 @@ async function persistSearchCollection(options = {}) {
     total: Number.isInteger(total) && total >= items.length ? total : items.length,
     totalKnown: options.totalKnown === true,
     truncated: options.truncated === true,
+    collectionIdentity: normalizedCollectionIdentity(options.collectionIdentity),
     createdAt: new Date().toISOString(),
   };
   await chrome.storage.session.set({ [SEARCH_COLLECTION_STORAGE_KEY]: collection });
@@ -1391,7 +1425,16 @@ function searchCollectionMatches(collection, request = {}) {
   if (!Number.isInteger(request.tabId) || collection.tabId !== request.tabId) return false;
   if (request.adapter && collection.adapter !== request.adapter) return false;
   if (collection.query !== normalizedCollectionQuery(request.query)) return false;
-  return collection.categoryKey === normalizedCollectionCategory(request.categoryKey);
+  if (collection.categoryKey !== normalizedCollectionCategory(request.categoryKey)) {
+    return false;
+  }
+  if (collection.adapter === "online-app") {
+    return collectionIdentityMatches(
+      collection.collectionIdentity,
+      request.collectionIdentity
+    );
+  }
+  return true;
 }
 
 async function startExportJob(options) {
@@ -1872,9 +1915,26 @@ async function executeSearchFlow(message) {
 
   const count = result.items?.length || 0;
   const categoryKey = result.breakdown?.at(-1)?.instance || "";
+  const collectionTabId = result.fullResultsTabId || tab.id;
+  let collectionIdentity = null;
+  if (result.adapter === "online-app") {
+    try {
+      const finalPing = await sendToTab(collectionTabId, { type: "PING" });
+      if (
+        finalPing?.ok &&
+        normalizedCollectionQuery(finalPing.query) ===
+          normalizedCollectionQuery(query) &&
+        normalizedCollectionCategory(finalPing.category?.key) === categoryKey
+      ) {
+        collectionIdentity = finalPing.collectionIdentity || null;
+      }
+    } catch {
+      // The result remains usable now, but it will be rescanned after popup reload.
+    }
+  }
   await persistSearchCollection({
     source: "search",
-    tabId: result.fullResultsTabId || tab.id,
+    tabId: collectionTabId,
     adapter: result.adapter,
     query,
     categoryKey,
@@ -1883,6 +1943,7 @@ async function executeSearchFlow(message) {
     total: count,
     totalKnown: result.adapter === "online-app" && result.truncated !== true,
     truncated: result.truncated === true,
+    collectionIdentity,
   });
   return { ...result, count };
 }
@@ -2051,16 +2112,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const ping = await sendToTab(tab.id, { type: "PING" });
         const expectedQuery = normalizedCollectionQuery(message.query);
         const expectedCategory = normalizedCollectionCategory(message.categoryKey);
+        const expectedIdentity = normalizedCollectionIdentity(
+          message.collectionIdentity
+        );
+        const currentIdentity = normalizedCollectionIdentity(
+          ping?.collectionIdentity
+        );
         if (
           !ping?.ok ||
           ping.page !== "list" ||
           ping.adapter !== message.adapter ||
           normalizedCollectionQuery(ping.query) !== expectedQuery ||
-          normalizedCollectionCategory(ping.category?.key) !== expectedCategory
+          normalizedCollectionCategory(ping.category?.key) !== expectedCategory ||
+          (ping.adapter === "online-app" &&
+            !collectionIdentityMatches(expectedIdentity, currentIdentity))
         ) {
           return { ok: false, error: "Страница уже показывает другую выдачу" };
         }
-        const collection = await persistSearchCollection(message);
+        const collection = await persistSearchCollection({
+          ...message,
+          collectionIdentity: currentIdentity,
+        });
         return { ok: true, cache: collection };
       }
 

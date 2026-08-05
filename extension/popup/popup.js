@@ -641,6 +641,7 @@ async function scanList(initialPing = null) {
     total: response.categoryTotalKnown ? response.categoryTotal : response.count,
     totalKnown: response.categoryTotalKnown === true,
     truncated: response.truncated === true,
+    collectionIdentity: response.collectionIdentity,
   });
   if (response.category?.label) {
     if (response.categoryTotalKnown) {
@@ -668,6 +669,7 @@ async function restoreCollection(ping) {
     adapter: ping.adapter,
     query: ping.query || "",
     categoryKey: ping.category?.key || "",
+    collectionIdentity: ping.collectionIdentity,
   });
   const cache = response?.cache;
   if (!response?.ok || cache?.status !== "ready") return false;

@@ -91,9 +91,23 @@ test("search collections are persisted in session storage and exposed through sc
   );
   assert.match(source, /async function readSearchCollection\(\)/);
   assert.match(source, /function searchCollectionMatches\(collection, request = \{\}\)/);
+  assert.match(source, /function normalizedCollectionIdentity\(value\)/);
+  assert.match(source, /function collectionIdentityMatches\(left, right\)/);
+  assert.match(source, /collectionIdentity: normalizedCollectionIdentity\(options\.collectionIdentity\)/);
+  assert.match(
+    source,
+    /collection\.adapter === "online-app"[\s\S]{0,180}collectionIdentityMatches/
+  );
   assert.match(source, /case "GET_SEARCH_COLLECTION"/);
   assert.match(source, /case "CACHE_SEARCH_COLLECTION"/);
-  assert.match(source, /await persistSearchCollection\(message\)/);
+  assert.match(
+    source,
+    /case "CACHE_SEARCH_COLLECTION":[\s\S]{0,900}const ping = await sendToTab\(tab\.id, \{ type: "PING" \}\)/
+  );
+  assert.match(
+    source,
+    /const collection = await persistSearchCollection\(\{[\s\S]{0,100}\.\.\.message,[\s\S]{0,100}collectionIdentity: currentIdentity/
+  );
   assert.match(
     source,
     /await persistSearchCollection\(\{[\s\S]{0,500}source: "search"[\s\S]{0,500}items: result\.items \|\| \[\]/

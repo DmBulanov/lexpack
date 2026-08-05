@@ -10,14 +10,14 @@ const baseManifest = require(path.join(root, "extension/manifest.base.json"));
 
 test("Chrome and Chromium-Gost are explicit independently versioned variants", () => {
   assert.equal(chrome.id, "chrome");
-  assert.equal(chrome.manifest.versionName, "0.8.6-chrome");
+  assert.equal(chrome.manifest.versionName, "0.8.7-chrome");
   assert.match(chrome.manifest.name, /\(Chrome\)$/);
-  assert.equal(chrome.archiveName, "lexpack-chrome-0.8.6.zip");
+  assert.equal(chrome.archiveName, "lexpack-chrome-0.8.7.zip");
 
   assert.equal(gost.id, "chromium-gost");
-  assert.equal(gost.manifest.versionName, "0.8.6-gost");
+  assert.equal(gost.manifest.versionName, "0.8.7-gost");
   assert.match(gost.manifest.name, /\(Chromium-Gost\)$/);
-  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.8.6.zip");
+  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.8.7.zip");
 });
 
 test("both variants guard consecutive native downloads with pacing and one retry", () => {
