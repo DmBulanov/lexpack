@@ -10,27 +10,18 @@ const baseManifest = require(path.join(root, "extension/manifest.base.json"));
 
 test("Chrome and Chromium-Gost are explicit independently versioned variants", () => {
   assert.equal(chrome.id, "chrome");
-  assert.equal(chrome.manifest.versionName, "0.9.2-chrome");
+  assert.equal(chrome.manifest.versionName, "0.9.3-chrome");
   assert.match(chrome.manifest.name, /\(Chrome\)$/);
-  assert.equal(chrome.archiveName, "lexpack-chrome-0.9.2.zip");
+  assert.equal(chrome.archiveName, "lexpack-chrome-0.9.3.zip");
 
   assert.equal(gost.id, "chromium-gost");
-  assert.equal(gost.manifest.versionName, "0.9.2-gost");
+  assert.equal(gost.manifest.versionName, "0.9.3-gost");
   assert.match(gost.manifest.name, /\(Chromium-Gost\)$/);
-  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.9.2.zip");
+  assert.equal(gost.archiveName, "lexpack-chromium-gost-0.9.3.zip");
 });
 
-test("only Chromium-Gost enables the slower guarded native-download policy", () => {
-  assert.deepEqual(chrome.nativeDownloads, {
-    startTimeoutMs: 35000,
-    completionTimeoutMs: 60000,
-    maxAttempts: 1,
-    controlSettleMs: 0,
-    lateRecoveryGraceMs: 0,
-    interItemDelayMs: 0,
-    matchWindowMs: 35000,
-  });
-  assert.deepEqual(gost.nativeDownloads, {
+test("both variants guard consecutive native downloads with pacing and one retry", () => {
+  const guardedPolicy = {
     startTimeoutMs: 35000,
     completionTimeoutMs: 60000,
     maxAttempts: 2,
@@ -38,7 +29,9 @@ test("only Chromium-Gost enables the slower guarded native-download policy", () 
     lateRecoveryGraceMs: 2500,
     interItemDelayMs: 5000,
     matchWindowMs: 40000,
-  });
+  };
+  assert.deepEqual(chrome.nativeDownloads, guardedPolicy);
+  assert.deepEqual(gost.nativeDownloads, guardedPolicy);
 });
 
 test("the base manifest loads generated variant configuration first", () => {

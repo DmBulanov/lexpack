@@ -137,6 +137,9 @@ test("native download behavior is controlled by the selected build variant", () 
   assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.controlSettleMs/);
   assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.lateRecoveryGraceMs/);
   assert.match(source, /NATIVE_DOWNLOAD_CONFIG\.interItemDelayMs/);
+  assert.match(source, /RETRYABLE_NATIVE_START_CODES/);
+  assert.match(source, /"DOCX_CLEANUP_TIMEOUT"/);
+  assert.match(source, /throw responseError\(extracted/);
   assert.match(source, /function isRetryableNativeStartTimeout/);
   assert.match(source, /recoverTimedOutNativeDownload/);
   assert.match(source, /consAppendDownloadDiagnostic\(draft, "NM_RETRY"\)/);
@@ -146,7 +149,8 @@ test("native download behavior is controlled by the selected build variant", () 
     source,
     /result\.native && itemIndex \+ 1 < job\.items\.length[\s\S]{0,180}NATIVE_INTER_ITEM_DELAY_MS/
   );
-  assert.match(source, /После \$\{NATIVE_DOWNLOAD_MAX_ATTEMPTS\} попыток/);
+  assert.match(source, /nativeRetryExhaustedMessage\(error, NATIVE_DOWNLOAD_MAX_ATTEMPTS\)/);
+  assert.match(source, /исходный файл не сохранён/);
 });
 
 test("both variants route files through Chromium download APIs", () => {

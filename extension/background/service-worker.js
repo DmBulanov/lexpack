@@ -34,6 +34,10 @@ const NATIVE_LATE_RECOVERY_GRACE_MS = NATIVE_DOWNLOAD_CONFIG.lateRecoveryGraceMs
 const NATIVE_INTER_ITEM_DELAY_MS = NATIVE_DOWNLOAD_CONFIG.interItemDelayMs;
 const POLL_MS = 400;
 const DOWNLOAD_UNCONFIRMED_CODE = "DOWNLOAD_UNCONFIRMED";
+const RETRYABLE_NATIVE_START_CODES = new Set([
+  DOWNLOAD_UNCONFIRMED_CODE,
+  "DOCX_CLEANUP_TIMEOUT",
+]);
 const CONTENT_SCRIPT_FILES = [
   "shared/variant-config.js",
   "shared/filename.js",
@@ -91,6 +95,12 @@ function errorText(error) {
   return String(error?.message || error || "Неизвестная ошибка");
 }
 
+function responseError(response, fallback) {
+  const error = new Error(response?.error || fallback);
+  if (response?.code) error.code = String(response.code);
+  return error;
+}
+
 function unconfirmedDownloadError(message) {
   const error = new Error(message);
   error.code = DOWNLOAD_UNCONFIRMED_CODE;
@@ -103,11 +113,18 @@ function isUnconfirmedDownloadError(error) {
 
 function isRetryableNativeStartTimeout(error, job, itemIndex) {
   return Boolean(
-    error?.code === DOWNLOAD_UNCONFIRMED_CODE &&
+    RETRYABLE_NATIVE_START_CODES.has(error?.code) &&
       job?.current?.itemIndex === itemIndex &&
       job.current.downloadKind === "native" &&
       job.current.downloadId == null
   );
+}
+
+function nativeRetryExhaustedMessage(error, attempts) {
+  if (error?.code === "DOCX_CLEANUP_TIMEOUT") {
+    return `После ${attempts} попыток подготовка и локальная очистка Word-файла не завершились; исходный файл не сохранён`;
+  }
+  return `После ${attempts} попыток расширение не подтвердило начало загрузки; файл мог сохраниться в «Загрузки»`;
 }
 
 async function readJob() {
@@ -941,8 +958,11 @@ async function processExportItem(job, itemIndex) {
         type: "EXTRACT_DOCUMENT",
         format: job.format,
       });
-      if (!extracted?.ok || !extracted.doc?.nativeSaveTriggered) {
-        throw new Error(extracted?.error || "Сайт не запустил нативное сохранение");
+      if (!extracted?.ok) {
+        throw responseError(extracted, "Сайт не запустил нативное сохранение");
+      }
+      if (!extracted.doc?.nativeSaveTriggered) {
+        throw new Error("Сайт не запустил нативное сохранение");
       }
       if (
         job.format === "docx" &&
@@ -973,8 +993,11 @@ async function processExportItem(job, itemIndex) {
       type: "EXTRACT_DOCUMENT",
       format: job.format,
     });
-    if (!extracted?.ok || !extracted.doc) {
-      throw new Error(extracted?.error || "Не удалось извлечь документ");
+    if (!extracted?.ok) {
+      throw responseError(extracted, "Не удалось извлечь документ");
+    }
+    if (!extracted.doc) {
+      throw new Error("Не удалось извлечь документ");
     }
     if (extracted.doc.nativeSaveTriggered) {
       throw new Error("Адаптер неожиданно запустил нативный экспорт");
@@ -1326,7 +1349,7 @@ async function runStoredJob() {
           attempts >= NATIVE_DOWNLOAD_MAX_ATTEMPTS &&
           isRetryableNativeStartTimeout(error, draft, itemIndex);
         const message = retryExhausted
-          ? `После ${NATIVE_DOWNLOAD_MAX_ATTEMPTS} попыток расширение не подтвердило начало загрузки; файл мог сохраниться в «Загрузки»`
+          ? nativeRetryExhaustedMessage(error, NATIVE_DOWNLOAD_MAX_ATTEMPTS)
           : errorText(error);
         consMarkItemFinished(draft, itemIndex, status, { error: message });
         const prefix = status === "unconfirmed" ? "ПРОВЕРИТЬ" : "ERR";
