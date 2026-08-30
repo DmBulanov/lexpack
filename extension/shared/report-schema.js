@@ -76,6 +76,11 @@
       consultantDataRemoved: cleanup.consultantDataRemoved === true,
       pageNumberPreserved: cleanup.pageNumberPreserved === true,
       documentBodyPreserved: cleanup.documentBodyPreserved === true,
+      protectedNotesPreserved: cleanup.protectedNotesPreserved === true,
+      brandMentionsRemoved: Math.max(
+        0,
+        Math.min(1000000, Number(cleanup.brandMentionsRemoved) || 0)
+      ),
     };
   }
 

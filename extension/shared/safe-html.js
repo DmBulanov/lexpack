@@ -136,11 +136,7 @@
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
-  function consSanitizeHtmlFragment(unsafeHtml, documentObject = globalThis.document) {
-    if (!documentObject?.createElement || !documentObject?.createDocumentFragment) {
-      throw new Error("Для безопасного HTML-экспорта требуется DOMParser/offscreen document");
-    }
-
+  function consAssertSafeHtmlSourceSize(unsafeHtml) {
     const source = String(unsafeHtml ?? "");
     if (source.length > safeHtmlLimits.maxSourceBytes) {
       throw new Error("HTML-документ превышает безопасный лимит 16 МБ");
@@ -149,6 +145,15 @@
     if (sourceBytes > safeHtmlLimits.maxSourceBytes) {
       throw new Error("HTML-документ превышает безопасный лимит 16 МБ");
     }
+    return source;
+  }
+
+  function consSanitizeHtmlFragment(unsafeHtml, documentObject = globalThis.document) {
+    if (!documentObject?.createElement || !documentObject?.createDocumentFragment) {
+      throw new Error("Для безопасного HTML-экспорта требуется DOMParser/offscreen document");
+    }
+
+    const source = consAssertSafeHtmlSourceSize(unsafeHtml);
 
     const allowedTags = new Set(safeHtmlPolicy.allowedTags);
     const dropWithChildren = new Set(safeHtmlPolicy.dropWithChildren);
@@ -259,20 +264,33 @@
       "form-action 'none'",
     ].join("; ");
 
+    let sourceLabel = String(canonicalUrl || "не указан");
+    try {
+      const sourceUrl = new URL(sourceLabel);
+      const hostname = sourceUrl.hostname.toLowerCase();
+      if (hostname === "consultant.ru" || hostname.endsWith(".consultant.ru")) {
+        sourceLabel = "исходный документ";
+      }
+    } catch {
+      // Preserve the existing fallback for non-URL source labels.
+    }
+
     return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(
       csp
     )}"><meta name="referrer" content="no-referrer"><title>${escapeHtmlAttribute(
       title || "document"
     )}</title><style nonce="${nonce}">body{margin:2rem auto;max-width:72rem;padding:0 1.25rem;color:#111;font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}table{border-collapse:collapse;max-width:100%}th,td{border:1px solid #bbb;padding:.35rem .5rem;vertical-align:top}pre{overflow:auto;white-space:pre-wrap}img{max-width:100%;height:auto}.cons-export-source{color:#555;font-size:.875rem;margin-bottom:1.5rem}</style></head><body><p class="cons-export-source">Источник: ${escapeHtmlAttribute(
-      canonicalUrl || "не указан"
+      sourceLabel
     )}</p><main id="cons-export-content">${sanitizedHtml}</main></body></html>`;
   }
 
+  globalThis.consAssertSafeHtmlSourceSize = consAssertSafeHtmlSourceSize;
   globalThis.consBuildSafeHtmlDocument = consBuildSafeHtmlDocument;
   globalThis.consSanitizeHtmlFragment = consSanitizeHtmlFragment;
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
+      consAssertSafeHtmlSourceSize,
       consBuildSafeHtmlDocument,
       consSanitizeHtmlFragment,
       safeHtmlLimits,

@@ -6,7 +6,7 @@ const { consBuildReportV2 } = require("../extension/shared/report-schema.js");
 test("report v2 contains required planned/actual, metadata, attempts, and compatible fields", () => {
   const report = consBuildReportV2({
     id: "job-report",
-    extensionVersion: "0.9.4-chrome",
+    extensionVersion: "0.9.5-chrome",
     variant: "chrome",
     adapter: "online-app",
     startedAt: "2026-07-21T10:00:00.000Z",
@@ -39,6 +39,8 @@ test("report v2 contains required planned/actual, metadata, attempts, and compat
         consultantDataRemoved: true,
         pageNumberPreserved: true,
         documentBodyPreserved: true,
+        protectedNotesPreserved: true,
+        brandMentionsRemoved: 3,
         internalDetails: "must not be copied",
       },
       collisionResolution: { type: "none", internal: false },
@@ -46,7 +48,7 @@ test("report v2 contains required planned/actual, metadata, attempts, and compat
   }, { generatedAt: Date.UTC(2026, 6, 21, 10, 2, 0) });
 
   assert.equal(report.schemaVersion, 2);
-  assert.equal(report.extensionVersion, "0.9.4-chrome");
+  assert.equal(report.extensionVersion, "0.9.5-chrome");
   assert.equal(report.selectedCount, 1);
   assert.equal(report.resultCounters.failed, 1);
   assert.deepEqual(report.downloadDiagnostics, [{ at: "2026-07-21T10:00:01.000Z", code: "NM_RETRY", countBucket: "1" }]);
@@ -63,6 +65,8 @@ test("report v2 contains required planned/actual, metadata, attempts, and compat
     consultantDataRemoved: true,
     pageNumberPreserved: true,
     documentBodyPreserved: true,
+    protectedNotesPreserved: true,
+    brandMentionsRemoved: 3,
   });
   assert.equal(item.index, 1);
   assert.equal(item.title, "Решение");

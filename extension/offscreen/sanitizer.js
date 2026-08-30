@@ -7,9 +7,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   try {
     if (message.type === "SANITIZE_HTML") {
+      const sourceHtml = consAssertSafeHtmlSourceSize(message.html);
+      const contentRoot = document.createElement("div");
+      contentRoot.innerHTML = sourceHtml;
+      consCleanConsultantDocument(contentRoot);
+      const cleanTitle = consRemoveConsultantMentions(message.title).text;
       const html = consBuildSafeHtmlDocument(
-        message.title,
-        message.html,
+        cleanTitle,
+        contentRoot.innerHTML,
         message.canonicalUrl,
         document
       );
@@ -19,7 +24,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     if (message.type === "CREATE_BLOB_URL") {
       const mime = String(message.mime || "application/octet-stream");
-      if (!/^(?:text\/(?:plain|html)|application\/json)(?:;charset=utf-8)?$/i.test(mime)) {
+      if (
+        !/^(?:(?:text\/(?:plain|html)|application\/json)(?:;charset=utf-8)?|text\/markdown; charset=utf-8)$/i.test(
+          mime
+        )
+      ) {
         throw new Error("Неподдерживаемый MIME для локального файла");
       }
       const content = String(message.content ?? "");

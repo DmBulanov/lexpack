@@ -4,6 +4,7 @@ const test = require("node:test");
 const {
   consAppendJobLog,
   consAppendDownloadDiagnostic,
+  consCancelGuardExpiresAt,
   consCreateExportJob,
   consFinishJob,
   consIsJobActive,
@@ -12,6 +13,45 @@ const {
   consMarkItemStarted,
   consSafeDownloadDiagnostics,
 } = require("../extension/background/export-job.js");
+
+test("native cancellation guard covers the complete configured late-download window", () => {
+  const downloadStartedAt = Date.UTC(2026, 6, 18, 10, 0, 0);
+  const variants = [
+    require("../variants/chrome/config.json"),
+    require("../variants/chromium-gost/config.json"),
+  ];
+
+  for (const variant of variants) {
+    const nativeDownloads = variant.nativeDownloads;
+    const expectedWindowMs = Math.max(
+      32000,
+      nativeDownloads.matchWindowMs,
+      nativeDownloads.startTimeoutMs + nativeDownloads.lateRecoveryGraceMs
+    );
+    const expiresAt = consCancelGuardExpiresAt(
+      { downloadKind: "native", downloadStartedAt },
+      nativeDownloads,
+      downloadStartedAt + 1000
+    );
+
+    assert.equal(expiresAt, downloadStartedAt + expectedWindowMs, variant.id);
+    for (const elapsedMs of [32001, 35000, 37500, 39999, 40000]) {
+      assert.ok(
+        expiresAt >= downloadStartedAt + elapsedMs,
+        `${variant.id} guard expired before ${elapsedMs} ms`
+      );
+    }
+  }
+
+  assert.equal(
+    consCancelGuardExpiresAt(
+      { downloadKind: "direct", downloadStartedAt },
+      variants[0].nativeDownloads,
+      downloadStartedAt + 1000
+    ),
+    downloadStartedAt + 32000
+  );
+});
 
 test("download diagnostics accept only closed codes and never copy sensitive values", () => {
   const job = createJob();

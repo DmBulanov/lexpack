@@ -8,7 +8,7 @@
     searchScopes: Object.freeze(["all"]),
     collectList: true,
     extractDocument: true,
-    exportFormats: Object.freeze(["txt", "html"]),
+    exportFormats: Object.freeze(["txt", "md", "html"]),
     nativeSave: false,
   });
 
@@ -171,28 +171,44 @@
         document.querySelector("main") ||
         document.body;
 
-      // Drop chrome: nav, search, promo
       const clone = root.cloneNode(true);
-      clone
-        .querySelectorAll(
-          "nav, .header, .breadcrumbs, .search, script, style, .promo, iframe"
-        )
-        .forEach((el) => el.remove());
+      const cleanupStats = consCleanConsultantDocument(clone, {
+        removeSelectors: [
+          "script, style, template, iframe, noscript",
+          "button, form, input, textarea, select, progress",
+          "[role='button'], [role='menu'], [role='dialog'], [role='navigation']",
+          "nav, .header, .breadcrumbs, .search, .promo, .full-text__button",
+        ],
+      });
 
-      const text = clone.innerText.replace(/\n{3,}/g, "\n\n").trim();
+      const text = consSerializeConsultantText(clone)
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
       const html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(
         title
       )}</title></head><body>${clone.innerHTML}</body></html>`;
 
-      return { title, text, html, url: location.href };
+      return {
+        title,
+        text,
+        html,
+        url: location.href,
+        contentCleanup: {
+          consultantDataRemoved: true,
+          protectedNotesPreserved: true,
+          brandMentionsRemoved: cleanupStats.mentionsRemoved,
+        },
+      };
     },
 
     getDocumentTitle() {
-      return (
+      const title =
         document.querySelector("h1")?.innerText?.trim() ||
         document.querySelector(".document-page__title")?.innerText?.trim() ||
-        document.title.replace(/\s*\\?\s*КонсультантПлюс.*$/i, "").trim()
-      );
+        document.title.replace(/\s*\\?\s*КонсультантПлюс.*$/i, "").trim();
+      return consRemoveConsultantMentions(title).text
+        .replace(/\s*[-–—|]\s*$/u, "")
+        .trim() || "document";
     },
 
     probe() {

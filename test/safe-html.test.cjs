@@ -11,6 +11,7 @@ const offscreenHtmlPath = path.join(root, "extension/offscreen/sanitizer.html");
 const fixturePath = path.join(root, "test/fixtures/safe-html.json");
 
 const {
+  consAssertSafeHtmlSourceSize,
   consBuildSafeHtmlDocument,
   consSanitizeHtmlFragment,
   safeHtmlLimits,
@@ -162,7 +163,13 @@ test("every HTML sink uses a static sanitizer boundary", () => {
   assert.match(worker, /offscreenRequest\("SANITIZE_HTML"/);
   assert.match(worker, /async function buildExportBody\(/);
   assert.doesNotMatch(worker, /format\s*===\s*["']html["']\s*\?\s*[^:]+\.html/);
+  assert.match(offscreen, /consCleanConsultantDocument\(contentRoot\)/);
+  assert.ok(
+    offscreen.indexOf("consAssertSafeHtmlSourceSize(message.html)") <
+      offscreen.indexOf("contentRoot.innerHTML = sourceHtml")
+  );
   assert.match(offscreen, /consBuildSafeHtmlDocument\(/);
+  assert.match(offscreenHtml, /\.\.\/shared\/content-cleaner\.js/);
   assert.match(offscreenHtml, /\.\.\/shared\/safe-html\.js/);
   assert.doesNotMatch(content, /sanitizeHtml|htmlSanitized|consBuildSafeHtmlDocument/);
 });
@@ -219,7 +226,8 @@ test("serialization emits static sanitized HTML with restrictive CSP and no rend
   const main = exported.match(/<main id="cons-export-content">([\s\S]*?)<\/main>/)?.[1] || "";
   assert.doesNotMatch(main, /fixture marker/);
   assert.doesNotMatch(exported, /<title>Title <\/title><script>/);
-  assert.match(exported, /q=&lt;fixture&gt;&amp;quote=&quot;yes&quot;/);
+  assert.match(exported, /Источник: исходный документ/);
+  assert.doesNotMatch(exported, /online\.consultant\.ru/iu);
   assert.match(exported, /<main id="cons-export-content"><div class="kept"/);
 });
 
@@ -254,6 +262,7 @@ test("the static sanitizer rejects active markup, undeclared attributes, and URL
 
 test("the sanitizer rejects oversized source before DOM expansion", () => {
   const oversized = "a".repeat(safeHtmlLimits.maxSourceBytes + 1);
+  assert.throws(() => consAssertSafeHtmlSourceSize(oversized), /лимит 16 МБ/);
   assert.throws(
     () => consSanitizeHtmlFragment(oversized, fixtureDocument({ nodes: [] }).document),
     /лимит 16 МБ/

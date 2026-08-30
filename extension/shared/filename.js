@@ -86,12 +86,15 @@
   }
 
   function consSafeFilename(title, index, ext) {
-    const name = consSanitizeFilenameStem(title, {
+    const safeExt = consSafeExtension(ext);
+    const sourceTitle = safeExt === "md"
+      ? String(title || "").replace(/\.(?:pdf|docx|md)$/iu, "")
+      : title;
+    const name = consSanitizeFilenameStem(sourceTitle, {
       fallback: "document",
       maximumCharacters: 100,
       replacement: " ",
     });
-    const safeExt = consSafeExtension(ext);
     const parsedIndex = Number(index);
     const num = Number.isInteger(parsedIndex) && parsedIndex >= 0
       ? `${String(parsedIndex).padStart(2, "0")} - `

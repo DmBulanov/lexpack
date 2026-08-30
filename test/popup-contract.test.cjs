@@ -21,6 +21,11 @@ test("popup retries an empty MV3 cold-start response once", () => {
   assert.match(source, /Фоновый процесс расширения не ответил/);
 });
 
+test("popup exposes Markdown as a selectable download format", () => {
+  assert.equal((html.match(/<option value="md">Markdown<\/option>/g) || []).length, 1);
+  assert.doesNotMatch(html, /<option value="rtf">/i);
+});
+
 test("cached result provenance is retained for the planner", () => {
   assert.match(source, /let cachedQuery = ""/);
   assert.match(source, /let cachedScope = "current-list"/);

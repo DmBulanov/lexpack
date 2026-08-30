@@ -26,6 +26,36 @@ test("arbitrary selection preserves source order and renumbers only selected row
   assert.deepEqual(consRebuildExportPlan(plan).items, plan.items);
 });
 
+test("Markdown plans derive English and Russian filenames from source document names", () => {
+  const profile = {
+    ...consCreateDefaultProfile({}, Date.UTC(2026, 6, 21)),
+    format: "md",
+    filenameTemplate: "{title}",
+  };
+  const plan = consBuildExportPlan({
+    adapter: "online-app",
+    items: [
+      {
+        index: 1,
+        title: "document.pdf",
+        url: "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=ARB&n=1",
+      },
+      {
+        index: 2,
+        title: "Решение суда.docx",
+        url: "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=ARB&n=2",
+      },
+    ],
+    profile,
+  });
+
+  assert.equal(plan.ok, true);
+  assert.deepEqual(
+    plan.items.map((item) => item.plannedFilename),
+    ["document.md", "Решение суда.md"]
+  );
+});
+
 test("a zero selection is blocked and missing metadata is visible in a custom plan", () => {
   const profile = {
     ...consCreateDefaultProfile({}, Date.UTC(2026, 6, 21)),

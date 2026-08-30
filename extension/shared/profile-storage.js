@@ -11,7 +11,9 @@
   const CONS_DEFAULT_FILENAME_TEMPLATE = "{index} - {title}";
   const CONS_PROFILE_COLLISION_POLICY = "ordered-suffix";
   const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/i;
-  const ALLOWED_FORMATS = new Set(runtimeApi.CONS_FORMATS || ["docx", "pdf", "rtf", "txt", "html"]);
+  const ALLOWED_FORMATS = new Set(
+    runtimeApi.CONS_FORMATS || ["docx", "pdf", "txt", "md", "html"]
+  );
 
   function isoOr(value, fallback) {
     return Number.isFinite(Date.parse(value || ""))
@@ -40,7 +42,8 @@
 
   function consCreateDefaultProfile(legacy = {}, now = Date.now()) {
     const timestamp = new Date(now).toISOString();
-    const requestedFormat = String(legacy.lastFormat || "docx").toLowerCase();
+    const storedFormat = String(legacy.lastFormat || "docx").toLowerCase();
+    const requestedFormat = storedFormat === "rtf" ? "docx" : storedFormat;
     return {
       schemaVersion: CONS_PROFILE_SCHEMA_VERSION,
       id: CONS_DEFAULT_PROFILE_ID,
@@ -104,7 +107,16 @@
 
     if (storedDefault) {
       try {
-        const normalized = consNormalizeProfile(storedDefault, { builtIn: true, now });
+        const normalized = consNormalizeProfile(
+          {
+            ...storedDefault,
+            format:
+              String(storedDefault.format || "").toLowerCase() === "rtf"
+                ? "docx"
+                : storedDefault.format,
+          },
+          { builtIn: true, now }
+        );
         profiles.push(normalized);
         seen.add(normalized.id);
       } catch {
@@ -120,7 +132,16 @@
       if (profiles.length >= 50) break;
       if (candidate?.id === CONS_DEFAULT_PROFILE_ID) continue;
       try {
-        const profile = consNormalizeProfile(candidate, { now });
+        const profile = consNormalizeProfile(
+          {
+            ...candidate,
+            format:
+              String(candidate?.format || "").toLowerCase() === "rtf"
+                ? "docx"
+                : candidate?.format,
+          },
+          { now }
+        );
         if (seen.has(profile.id)) continue;
         profiles.push(profile);
         seen.add(profile.id);

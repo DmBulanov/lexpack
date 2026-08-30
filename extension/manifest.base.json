@@ -44,6 +44,7 @@
         "shared/variant-config.js",
         "shared/filename.js",
         "shared/runtime.js",
+        "shared/content-cleaner.js",
         "content/adapters/public-site.js",
         "content/adapters/online-app.js",
         "content/content.js"

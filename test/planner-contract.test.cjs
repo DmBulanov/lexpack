@@ -25,6 +25,11 @@ test("planner exposes arbitrary selection, source/export indexes, and live previ
   assert.doesNotMatch(source, /START_TAB_EXPORT/);
 });
 
+test("planner exposes Markdown as a selectable profile format", () => {
+  assert.equal((html.match(/<option value="md">Markdown<\/option>/g) || []).length, 1);
+  assert.doesNotMatch(html, /<option value="rtf">/i);
+});
+
 test("planner manages profiles and blocks launch through plan validation", () => {
   for (const id of [
     "profileSelect", "newProfile", "duplicateProfile", "deleteProfile",

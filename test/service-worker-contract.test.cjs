@@ -11,6 +11,10 @@ const searchSource = fs.readFileSync(
   path.resolve(__dirname, "../extension/background/search-flow.js"),
   "utf8"
 );
+const offscreenSource = fs.readFileSync(
+  path.resolve(__dirname, "../extension/offscreen/sanitizer.js"),
+  "utf8"
+);
 
 test("service worker persists jobs and has an alarm-backed resume path", () => {
   assert.match(source, /chrome\.storage\.session\.set/);
@@ -188,6 +192,35 @@ test("Word downloads install the bounded main-world cleaner and require its conf
   assert.match(source, /extracted\.doc\.contentCleanup\?\.consultantDataRemoved !== true/);
   assert.match(source, /extracted\.doc\.contentCleanup\?\.pageNumberPreserved !== true/);
   assert.match(source, /extracted\.doc\.contentCleanup\?\.documentBodyPreserved !== true/);
+  assert.match(source, /extracted\.doc\.contentCleanup\?\.protectedNotesPreserved !== true/);
+});
+
+test("RTF exports are rejected while DOCX and PDF remain native", () => {
+  const runtime = fs.readFileSync(
+    path.resolve(__dirname, "../extension/shared/runtime.js"),
+    "utf8"
+  );
+  assert.match(runtime, /nativeFormats: Object\.freeze\(\["docx", "pdf"\]\)/);
+  assert.doesNotMatch(runtime, /CONS_FORMATS[^\n]*"rtf"/i);
+  assert.match(source, /отключённый формат RTF/);
+
+  const attachBody = source.slice(
+    source.indexOf("async function attachCreatedDownload"),
+    source.indexOf("chrome.downloads.onCreated.addListener")
+  );
+  assert.ok(
+    attachBody.indexOf("job?.cancelGuard") < attachBody.indexOf("job?.stopRequested"),
+    "the cancellation guard must run before an obsolete download can attach"
+  );
+
+  const storedJobGuard = source.slice(
+    source.indexOf("async function runStoredJob"),
+    source.indexOf("while (job && consIsJobActive(job))")
+  );
+  assert.match(storedJobGuard, /draft\.cancelGuard = cancelGuard/);
+  assert.match(storedJobGuard, /draft\.stopRequested = true/);
+  assert.match(storedJobGuard, /draft\.status = "stopping"/);
+  assert.match(storedJobGuard, /cleanupResources\(await readJob\(\), true\)/);
 });
 
 test("download diagnostics are closed, sanitized in reports, and exposed safely", () => {
@@ -214,6 +247,18 @@ test("report query privacy and the final download path are enforced by the worke
   assert.match(source, /reportQueryIncluded: historyMode === "detailed"/);
   assert.match(source, /function suggestedFilenameFor[\s\S]{0,700}consSafeRelativeDownloadPath/);
   assert.match(source, /async function downloadGeneratedFile[\s\S]{0,240}consSafeRelativeDownloadPath/);
+});
+
+test("Markdown direct downloads preserve the body and use the exact UTF-8 MIME type", () => {
+  const buildBody = source.slice(
+    source.indexOf("async function buildExportBody"),
+    source.indexOf("async function createBlobUrl")
+  );
+  assert.match(buildBody, /const result = consBuildTextExportBody\(doc, format\)/);
+  assert.match(buildBody, /consAssertConsultantTextClean\(result\.body\)/);
+  assert.match(buildBody, /return result/);
+  assert.match(source, /\["html", "txt", "md"\]\.includes\(message\.format\)/);
+  assert.match(offscreenSource, /text\\\/markdown; charset=utf-8/);
 });
 
 test("stop requests are checked before tab extraction and while saving the report", () => {

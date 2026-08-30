@@ -24,6 +24,28 @@ test("legacy format and folder migrate into the built-in compatible profile", ()
   assert.equal(state.profiles[0].builtIn, true);
 });
 
+test("Markdown remains selected when migrated from existing settings", () => {
+  const state = consMigrateProfileState(null, { lastFormat: "md" }, NOW);
+  assert.equal(state.profiles[0].format, "md");
+});
+
+test("legacy RTF settings and stored profiles migrate to DOCX", () => {
+  const fromLegacy = consMigrateProfileState(null, { lastFormat: "rtf" }, NOW);
+  assert.equal(fromLegacy.profiles[0].format, "docx");
+
+  const fromStoredProfiles = consMigrateProfileState({
+    selectedProfileId: "legacy-rtf",
+    profiles: [
+      { id: "default", format: "rtf", filenameTemplate: "{title}", folderTemplate: "LexPack" },
+      { id: "legacy-rtf", name: "Старый RTF", format: "rtf", filenameTemplate: "{case}", folderTemplate: "Акты" },
+    ],
+  }, {}, NOW);
+  assert.equal(fromStoredProfiles.profiles[0].format, "docx");
+  assert.equal(fromStoredProfiles.profiles[1].format, "docx");
+  assert.equal(fromStoredProfiles.profiles[1].folderTemplate, "Акты");
+  assert.equal(fromStoredProfiles.selectedProfileId, "legacy-rtf");
+});
+
 test("missing settings produce a stable default and migrate legacy default folder names", () => {
   assert.deepEqual(
     {
@@ -65,7 +87,7 @@ test("the built-in profile cannot be deleted and deleting an active custom profi
   state = consUpsertProfileState(state, {
     id: "custom",
     name: "Клиент",
-    format: "rtf",
+    format: "md",
     filenameTemplate: "{title}",
     folderTemplate: "LexPack/{query}",
   }, NOW + 1000);
@@ -76,6 +98,20 @@ test("the built-in profile cannot be deleted and deleting an active custom profi
   assert.deepEqual(
     consDeleteProfileState(state, "default").profiles.map((profile) => profile.id),
     ["default"]
+  );
+});
+
+test("new RTF profiles are rejected", () => {
+  const state = consMigrateProfileState(null, {}, NOW);
+  assert.throws(
+    () => consUpsertProfileState(state, {
+      id: "new-rtf",
+      name: "RTF",
+      format: "rtf",
+      filenameTemplate: "{title}",
+      folderTemplate: "LexPack",
+    }, NOW + 1000),
+    /Некорректный формат профиля/
   );
 });
 

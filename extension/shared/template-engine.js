@@ -22,7 +22,7 @@
   ]);
   const TOKEN_SET = new Set(CONS_TEMPLATE_TOKENS);
   const SEPARATOR_EDGE = /^[\s._,;:\-–—]+|[\s._,;:\-–—]+$/gu;
-  const KNOWN_EXTENSION = /\.(?:docx|pdf|rtf|txt|html)$/iu;
+  const KNOWN_EXTENSION = /\.(?:docx|pdf|rtf|txt|md|html)$/iu;
 
   function unique(values) {
     return [...new Set(values)];

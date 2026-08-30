@@ -1,10 +1,9 @@
 /**
  * Local DOCX sanitizer for ConsultantPlus exports.
  *
- * The module keeps the document body intact. It clears branded header parts,
- * replaces branded footer layouts with a page counter, removes brand-bearing
- * package properties, and drops media that was referenced only by the removed
- * header/footer relationships.
+ * The module preserves the legal structure while removing ConsultantPlus
+ * mentions from visible Word text. Paragraphs beginning with the official
+ * "КонсультантПлюс: примечание" marker are intentionally left unchanged.
  */
 (function () {
   "use strict";
@@ -314,52 +313,487 @@
     return output;
   }
 
+  // Match the same in-name separators as the DOM cleaner. In particular,
+  // line breaks are not separators: two words on different lines must not be
+  // treated as one brand mention.
+  const BRAND_SEPARATOR_SOURCE =
+    "[\\p{Zs}\\t\\u200b-\\u200d\\ufeff‐‑‒–—-]*";
+  const CONSULTANT_DOMAIN_LABEL_SOURCE =
+    "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
+  const CONSULTANT_HOST_SOURCE =
+    `(?:${CONSULTANT_DOMAIN_LABEL_SOURCE}\\.)*consultant\\.ru`;
+  const CONSULTANT_DOMAIN_SOURCE =
+    `(?<![\\p{L}\\p{N}._-])(?:https?:\\/\\/)?${CONSULTANT_HOST_SOURCE}` +
+    `(?=$|[^\\p{L}\\p{N}._-]|\\.(?![\\p{L}\\p{N}_-]))`;
+  const BRAND_MENTION_SOURCE =
+    `(?:Консультант${BRAND_SEPARATOR_SOURCE}(?:Плюс|[+＋])|` +
+    `Consultant${BRAND_SEPARATOR_SOURCE}(?:Plus|[+＋])|` +
+    `${CONSULTANT_DOMAIN_SOURCE})`;
+  const CONSULTANT_DOMAIN_ONLY_PATTERN = new RegExp(
+    `^\\s*(?:https?:\\/\\/)?${CONSULTANT_HOST_SOURCE}(?:\\/|\\.)?\\s*$`,
+    "iu"
+  );
+  const CONSULTANT_NOTE_PATTERN = new RegExp(
+    `^\\s*Консультант${BRAND_SEPARATOR_SOURCE}(?:Плюс|[+＋])` +
+      `${BRAND_SEPARATOR_SOURCE}[:：]${BRAND_SEPARATOR_SOURCE}` +
+      "примечание(?=$|[\\s.,;:!?()«»—–-])",
+    "iu"
+  );
+
+  function brandPattern() {
+    return new RegExp(BRAND_MENTION_SOURCE, "giu");
+  }
+
+  function brandRanges(value) {
+    return [...String(value || "").matchAll(brandPattern())].map((match) => [
+      match.index,
+      match.index + match[0].length,
+    ]);
+  }
+
+  function isConsultantNote(value) {
+    return CONSULTANT_NOTE_PATTERN.test(String(value || "").normalize("NFC"));
+  }
+
   function containsBrand(value) {
-    return /(?:Консультант\s*(?:\+|Плюс)|Consultant\s*Plus|consultant\.ru|Документ\s+предоставлен|Дата\s+сохранения|надежная\s+правовая\s+поддержка)/iu.test(
-      String(value || "")
-    );
+    return brandRanges(value).length > 0;
   }
 
-  function xmlText(xml) {
-    const values = [];
-    const pattern = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>/giu;
-    let match;
-    while ((match = pattern.exec(String(xml || "")))) {
-      values.push(
-        decodeXmlAttribute(match[1]).replace(/&#(?:x([0-9a-f]+)|(\d+));/giu, (_full, hex, dec) => {
-          const point = Number.parseInt(hex || dec, hex ? 16 : 10);
-          return Number.isInteger(point) && point >= 0 && point <= 0x10ffff
-            ? String.fromCodePoint(point)
-            : "";
-        })
-      );
-    }
-    return values.join("");
+  function isHeaderFooterBoilerplate(value) {
+    const text = String(value || "");
+    if (isConsultantNote(text)) return false;
+    return /(?:Документ\s+предоставлен|Дата\s+сохранения|надежная\s+правовая\s+поддержка)/iu.test(
+      text
+    ) || CONSULTANT_DOMAIN_ONLY_PATTERN.test(text);
   }
 
-  function removeHeaderObjects(value) {
+  function escapeXmlText(value) {
     return String(value || "")
-      .replace(
-        /<w:(drawing|pict|object)\b(?:[^>]*\/\s*>|[\s\S]*?<\/w:\1>)/giu,
-        ""
-      )
-      .replace(/<w:hyperlink\b[^>]*>([\s\S]*?)<\/w:hyperlink>/giu, (full, body) =>
-        containsBrand(xmlText(full)) ? "" : body
+      .replace(/&/gu, "&amp;")
+      .replace(/</gu, "&lt;")
+      .replace(/>/gu, "&gt;");
+  }
+
+  function decodeXmlText(value) {
+    return decodeXmlAttribute(value);
+  }
+
+  function encodeXmlNodeValue(node, value) {
+    return node.encoding === "cdata"
+      ? String(value || "").replaceAll("]]>", "]]]]><![CDATA[>")
+      : escapeXmlText(value);
+  }
+
+  function cleanTextNodeValue(value, globalStart, ranges) {
+    const source = String(value || "");
+    const globalEnd = globalStart + source.length;
+    let cursor = 0;
+    let cleaned = "";
+    for (const [rangeStart, rangeEnd] of ranges) {
+      if (rangeEnd <= globalStart || rangeStart >= globalEnd) continue;
+      const localStart = Math.max(0, rangeStart - globalStart);
+      const localEnd = Math.min(source.length, rangeEnd - globalStart);
+      cleaned += source.slice(cursor, localStart);
+      cursor = Math.max(cursor, localEnd);
+    }
+    return cleaned + source.slice(cursor);
+  }
+
+  function xmlTagRanges(value) {
+    const source = String(value || "");
+    const tags = [];
+    let cursor = 0;
+    while (cursor < source.length) {
+      const start = source.indexOf("<", cursor);
+      if (start < 0) break;
+      let end;
+      if (source.startsWith("<!--", start)) {
+        const close = source.indexOf("-->", start + 4);
+        if (close < 0) throw new Error("DOCX содержит незавершённый XML-комментарий");
+        end = close + 3;
+      } else if (source.startsWith("<![CDATA[", start)) {
+        const close = source.indexOf("]]>", start + 9);
+        if (close < 0) throw new Error("DOCX содержит незавершённый CDATA-блок");
+        end = close + 3;
+      } else if (source.startsWith("<?", start)) {
+        const close = source.indexOf("?>", start + 2);
+        if (close < 0) throw new Error("DOCX содержит незавершённую XML-инструкцию");
+        end = close + 2;
+      } else {
+        let quote = "";
+        let index = start + 1;
+        for (; index < source.length; index += 1) {
+          const character = source[index];
+          if (quote) {
+            if (character === quote) quote = "";
+          } else if (character === '"' || character === "'") {
+            quote = character;
+          } else if (character === ">") {
+            break;
+          }
+        }
+        if (index >= source.length) throw new Error("DOCX содержит незавершённый XML-тег");
+        end = index + 1;
+      }
+      tags.push({ start, end, value: source.slice(start, end) });
+      cursor = end;
+    }
+    return tags;
+  }
+
+  function parsedXmlTag(tag) {
+    if (/^<(?:\?|!)/u.test(tag.value)) return null;
+    const match = tag.value.match(/^<\s*(\/?)\s*([A-Za-z_][\w:.-]*)\b/u);
+    if (!match) return null;
+    return {
+      closing: Boolean(match[1]),
+      name: match[2].toLowerCase(),
+      selfClosing: /\/\s*>$/u.test(tag.value),
+    };
+  }
+
+  function xmlCharacterDataNodes(source, start, end, metadata = {}) {
+    const rangeSource = source.slice(start, end);
+    const nodes = [];
+    let cursor = 0;
+    const addNode = (localStart, localEnd, encoding) => {
+      if (localEnd <= localStart) return;
+      const rawValue = rangeSource.slice(localStart, localEnd);
+      nodes.push({
+        ...metadata,
+        start: start + localStart,
+        end: start + localEnd,
+        value: encoding === "cdata" ? rawValue : decodeXmlText(rawValue),
+        encoding,
+      });
+    };
+
+    for (const tag of xmlTagRanges(rangeSource)) {
+      addNode(cursor, tag.start, "text");
+      if (tag.value.startsWith("<![CDATA[")) {
+        addNode(tag.start + 9, tag.end - 3, "cdata");
+      }
+      cursor = tag.end;
+    }
+    addNode(cursor, rangeSource.length, "text");
+    return nodes;
+  }
+
+  const WORD_PARAGRAPH_TAGS = new Set(["w:p", "a:p"]);
+  const VISIBLE_WORD_TEXT_TAGS = new Set(["w:t", "w:deltext", "a:t"]);
+  const INSTRUCTION_WORD_TEXT_TAGS = new Set(["w:instrtext"]);
+  const WORD_LINE_BREAK_TAGS = new Set(["w:br", "w:cr", "a:br"]);
+  const HEADER_OBJECT_TAGS = new Set(["w:drawing", "w:pict", "w:object"]);
+
+  function scanWordXml(xml) {
+    const source = String(xml || "");
+    const paragraphs = [];
+    const textNodes = [];
+    const attributes = [];
+    const objects = [];
+    const paragraphStack = [];
+    const textStack = [];
+    const objectStack = [];
+
+    for (const tag of xmlTagRanges(source)) {
+      const parsed = parsedXmlTag(tag);
+      if (!parsed) continue;
+      const { name } = parsed;
+      if (parsed.closing) {
+        if (VISIBLE_WORD_TEXT_TAGS.has(name) || INSTRUCTION_WORD_TEXT_TAGS.has(name)) {
+          const opened = textStack.pop();
+          if (!opened || opened.name !== name) {
+            throw new Error("DOCX содержит некорректно вложенный текстовый XML-тег");
+          }
+          const nodes = xmlCharacterDataNodes(source, opened.end, tag.start, {
+            tag: name,
+            kind: VISIBLE_WORD_TEXT_TAGS.has(name) ? "visible" : "instruction",
+            paragraph: opened.paragraph,
+            segment: opened.segment,
+          });
+          textNodes.push(...nodes);
+          if (opened.paragraph) opened.paragraph.textNodes.push(...nodes);
+        } else if (WORD_PARAGRAPH_TAGS.has(name)) {
+          const paragraph = paragraphStack.pop();
+          if (!paragraph || paragraph.tag !== name) {
+            throw new Error("DOCX содержит некорректно вложенный абзац");
+          }
+          paragraph.end = tag.end;
+        } else if (HEADER_OBJECT_TAGS.has(name)) {
+          const object = objectStack.pop();
+          if (!object || object.name !== name) {
+            throw new Error("DOCX содержит некорректно вложенный объект Word");
+          }
+          object.end = tag.end;
+          objects.push(object);
+        }
+        continue;
+      }
+
+      let openedParagraph = null;
+      if (WORD_PARAGRAPH_TAGS.has(name)) {
+        const parent = paragraphStack.at(-1) || null;
+        const paragraph = {
+          tag: name,
+          start: tag.start,
+          end: parsed.selfClosing ? tag.end : null,
+          parent,
+          children: [],
+          textNodes: [],
+          attributes: [],
+          segment: 0,
+          note: false,
+        };
+        openedParagraph = paragraph;
+        if (parent) parent.children.push(paragraph);
+        paragraphs.push(paragraph);
+        if (!parsed.selfClosing) paragraphStack.push(paragraph);
+      } else if (
+        (VISIBLE_WORD_TEXT_TAGS.has(name) || INSTRUCTION_WORD_TEXT_TAGS.has(name)) &&
+        !parsed.selfClosing
+      ) {
+        textStack.push({
+          name,
+          end: tag.end,
+          paragraph: paragraphStack.at(-1) || null,
+          segment: paragraphStack.at(-1)?.segment || 0,
+        });
+      } else if (WORD_LINE_BREAK_TAGS.has(name)) {
+        const paragraph = paragraphStack.at(-1) || null;
+        if (paragraph) paragraph.segment += 1;
+      } else if (HEADER_OBJECT_TAGS.has(name)) {
+        const object = {
+          name,
+          start: tag.start,
+          end: parsed.selfClosing ? tag.end : null,
+          paragraph: paragraphStack.at(-1) || null,
+        };
+        if (parsed.selfClosing) objects.push(object);
+        else objectStack.push(object);
+      }
+
+      const attributeParagraph = openedParagraph || paragraphStack.at(-1) || null;
+      for (const attribute of xmlAttributeNodes(tag)) {
+        attribute.paragraph = attributeParagraph;
+        attributes.push(attribute);
+        if (attributeParagraph) attributeParagraph.attributes.push(attribute);
+      }
+    }
+    if (paragraphStack.length || textStack.length || objectStack.length) {
+      throw new Error("DOCX содержит незавершённую структуру Word XML");
+    }
+    return { source, paragraphs, textNodes, attributes, objects };
+  }
+
+  function paragraphNodeSegments(paragraph, kind) {
+    const segments = [];
+    for (const node of paragraph.textNodes.filter((entry) => entry.kind === kind)) {
+      let segment = segments.at(-1);
+      if (!segment || segment.id !== node.segment) {
+        segment = { id: node.segment, nodes: [], value: "" };
+        segments.push(segment);
+      }
+      segment.nodes.push(node);
+      segment.value += node.value;
+    }
+    return segments;
+  }
+
+  function paragraphIsNote(paragraph) {
+    const firstSegment = paragraphNodeSegments(paragraph, "visible")[0];
+    return Boolean(firstSegment && isConsultantNote(firstSegment.value));
+  }
+
+  function paragraphIsProtected(paragraph) {
+    let current = paragraph;
+    while (current) {
+      if (current.note) return true;
+      current = current.parent;
+    }
+    return false;
+  }
+
+  function textNodeReplacements(nodes, ranges) {
+    const replacements = [];
+    let globalStart = 0;
+    for (const node of nodes) {
+      const cleaned = cleanTextNodeValue(node.value, globalStart, ranges);
+      if (cleaned !== node.value) {
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          value: encodeXmlNodeValue(node, cleaned),
+        });
+      }
+      globalStart += node.value.length;
+    }
+    return replacements;
+  }
+
+  function rangeContains(container, range) {
+    return container.start <= range.start && container.end >= range.end;
+  }
+
+  function rangesOverlap(first, second) {
+    return first.start < second.end && second.start < first.end;
+  }
+
+  function outermostReplacements(replacements) {
+    const ordered = [...replacements].sort(
+      (first, second) => first.start - second.start || second.end - first.end
+    );
+    const result = [];
+    for (const replacement of ordered) {
+      if (result.some((parent) => rangeContains(parent, replacement))) continue;
+      if (result.some((other) => rangesOverlap(other, replacement))) {
+        throw new Error("DOCX очиститель получил пересекающиеся XML-структуры");
+      }
+      result.push(replacement);
+    }
+    return result;
+  }
+
+  function applyXmlReplacements(source, replacements) {
+    const ordered = [...replacements].sort((a, b) => b.start - a.start || a.end - b.end);
+    let output = source;
+    let previousStart = source.length + 1;
+    for (const replacement of ordered) {
+      if (replacement.end > previousStart) {
+        throw new Error("DOCX очиститель получил пересекающиеся XML-диапазоны");
+      }
+      output = output.slice(0, replacement.start) + replacement.value + output.slice(replacement.end);
+      previousStart = replacement.start;
+    }
+    return output;
+  }
+
+  function cleanWordTextXml(xml, options = {}) {
+    const scanned = scanWordXml(xml);
+    const stats = { mentionsRemoved: 0, protectedNotes: 0, serviceBlocksRemoved: 0 };
+    for (const paragraph of scanned.paragraphs) {
+      paragraph.note = paragraphIsNote(paragraph);
+      if (paragraph.note) stats.protectedNotes += 1;
+    }
+
+    const paragraphRemovals = [];
+    const replacements = [];
+    for (const paragraph of scanned.paragraphs) {
+      if (paragraphIsProtected(paragraph)) continue;
+      const visibleSegments = paragraphNodeSegments(paragraph, "visible");
+      const instructionSegments = paragraphNodeSegments(paragraph, "instruction");
+      const visibleText = visibleSegments.map((segment) => segment.value).join("\n");
+      const segmentRanges = [...visibleSegments, ...instructionSegments].map((segment) => ({
+        segment,
+        ranges: brandRanges(segment.value),
+      }));
+      stats.mentionsRemoved += segmentRanges.reduce(
+        (count, entry) => count + entry.ranges.length,
+        0
       );
+
+      if (
+        options.removeBoilerplate &&
+        !paragraph.children.length &&
+        isHeaderFooterBoilerplate(visibleText)
+      ) {
+        paragraphRemovals.push({
+          start: paragraph.start,
+          end: paragraph.end,
+          value: `<${paragraph.tag}/>`,
+        });
+        stats.serviceBlocksRemoved += 1;
+        continue;
+      }
+      for (const { segment, ranges } of segmentRanges) {
+        replacements.push(...textNodeReplacements(segment.nodes, ranges));
+      }
+    }
+
+    for (const node of scanned.textNodes.filter((entry) => !entry.paragraph)) {
+      const ranges = brandRanges(node.value);
+      stats.mentionsRemoved += ranges.length;
+      replacements.push(...textNodeReplacements([node], ranges));
+    }
+
+    for (const attribute of scanned.attributes) {
+      if (attribute.paragraph && paragraphIsProtected(attribute.paragraph)) continue;
+      const ranges = brandRanges(attribute.value);
+      if (!ranges.length) continue;
+      stats.mentionsRemoved += ranges.length;
+      const cleaned = cleanTextNodeValue(attribute.value, 0, ranges);
+      replacements.push({
+        start: attribute.start,
+        end: attribute.end,
+        value: escapeXmlAttribute(cleaned, attribute.quote),
+      });
+    }
+
+    const protectedParagraphs = scanned.paragraphs.filter((paragraph) =>
+      paragraphIsProtected(paragraph)
+    );
+    const objectRemovals = [];
+    if (options.removeObjects) {
+      const candidates = scanned.objects
+        .filter((object) => object.end != null)
+        .filter(
+          (object) =>
+            !protectedParagraphs.some((paragraph) => rangesOverlap(object, paragraph)) &&
+            !paragraphRemovals.some((paragraph) => rangeContains(paragraph, object))
+        )
+        .sort((a, b) => a.start - b.start || b.end - a.end);
+      for (const object of candidates) {
+        if (objectRemovals.some((parent) => rangeContains(parent, object))) continue;
+        objectRemovals.push({ start: object.start, end: object.end, value: "" });
+      }
+    }
+
+    const fullRemovals = outermostReplacements([
+      ...paragraphRemovals,
+      ...objectRemovals,
+    ]);
+    const safeInlineReplacements = replacements.filter(
+      (replacement) => !fullRemovals.some((range) => rangeContains(range, replacement))
+    );
+    return {
+      xml: applyXmlReplacements(scanned.source, [...fullRemovals, ...safeInlineReplacements]),
+      ...stats,
+    };
+  }
+
+  function remainingWordMentions(xml) {
+    const scanned = scanWordXml(xml);
+    let remaining = 0;
+    for (const paragraph of scanned.paragraphs) {
+      paragraph.note = paragraphIsNote(paragraph);
+    }
+    for (const paragraph of scanned.paragraphs) {
+      if (paragraphIsProtected(paragraph)) continue;
+      for (const segment of [
+        ...paragraphNodeSegments(paragraph, "visible"),
+        ...paragraphNodeSegments(paragraph, "instruction"),
+      ]) {
+        remaining += brandRanges(segment.value).length;
+      }
+    }
+    for (const node of scanned.textNodes.filter((entry) => !entry.paragraph)) {
+      remaining += brandRanges(node.value).length;
+    }
+    for (const attribute of scanned.attributes) {
+      if (attribute.paragraph && paragraphIsProtected(attribute.paragraph)) continue;
+      remaining += brandRanges(attribute.value).length;
+    }
+    return remaining;
   }
 
   function cleanHeaderXml(xml) {
-    const source = String(xml || "");
-    const root = source.match(/<w:hdr\b([^>]*)>/iu);
-    const rootAttributes = root?.[1] || ` xmlns:w="${WORD_NS}"`;
-    const bodyMatch = source.match(/<w:hdr\b[^>]*>([\s\S]*?)<\/w:hdr>/iu);
-    let body = bodyMatch?.[1] || "";
-    body = body.replace(/<w:p\b[\s\S]*?<\/w:p>/giu, (paragraph) =>
-      containsBrand(xmlText(paragraph)) ? "<w:p/>" : removeHeaderObjects(paragraph)
-    );
-    body = removeHeaderObjects(body);
-    if (!/<w:p\b/iu.test(body)) body += "<w:p/>";
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr${rootAttributes}>${body}</w:hdr>`;
+    const cleaned = cleanWordTextXml(xml, {
+      removeBoilerplate: true,
+      removeObjects: true,
+    });
+    if (!/<w:p\b/iu.test(cleaned.xml)) {
+      cleaned.xml = cleaned.xml.replace(/<\/w:hdr>/iu, "<w:p/></w:hdr>");
+    }
+    return cleaned;
   }
 
   function fallbackPageParagraph() {
@@ -371,46 +805,315 @@
       `</w:p>`;
   }
 
+  function appendFooterContent(xml, content) {
+    const source = String(xml || "");
+    const selfClosingRoot = /<w:ftr\b([^>]*?)\/\s*>/iu;
+    if (selfClosingRoot.test(source)) {
+      return source.replace(
+        selfClosingRoot,
+        (_full, attributes) => `<w:ftr${attributes}>${content}</w:ftr>`
+      );
+    }
+    const closingRoot = /<\/w:ftr\s*>/iu;
+    if (!closingRoot.test(source)) {
+      throw new Error("DOCX не содержит корректный корневой элемент footer");
+    }
+    return source.replace(closingRoot, (closing) => `${content}${closing}`);
+  }
+
   function cleanFooterXml(xml) {
-    const root = String(xml || "").match(/<w:ftr\b([^>]*)>/iu);
-    const rootAttributes = root?.[1] || ` xmlns:w="${WORD_NS}"`;
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr${rootAttributes}>${fallbackPageParagraph()}</w:ftr>`;
+    const cleaned = cleanWordTextXml(xml, {
+      removeBoilerplate: true,
+      removeObjects: true,
+    });
+    const instructions = [];
+    const attributePattern = /\b(?:[A-Za-z_][\w.-]*:)?instr\s*=\s*(?:"([^"]*)"|'([^']*)')/giu;
+    let attribute;
+    while ((attribute = attributePattern.exec(cleaned.xml))) {
+      instructions.push(decodeXmlAttribute(attribute[1] ?? attribute[2]));
+    }
+    for (const node of scanWordXml(cleaned.xml).textNodes) {
+      if (node.kind === "instruction") instructions.push(node.value);
+    }
+    const allInstructions = instructions.join("\n");
+    if (!/\bPAGE\b/iu.test(allInstructions) || !/\bNUMPAGES\b/iu.test(allInstructions)) {
+      cleaned.xml = appendFooterContent(cleaned.xml, fallbackPageParagraph());
+    }
+    return cleaned;
+  }
+
+  function escapeXmlAttribute(value, quote) {
+    const escaped = escapeXmlText(value);
+    return quote === "'"
+      ? escaped.replace(/'/gu, "&apos;")
+      : escaped.replace(/"/gu, "&quot;");
+  }
+
+  function xmlAttributeNodes(tag) {
+    const parsed = parsedXmlTag(tag);
+    if (!parsed || parsed.closing) return [];
+    const attributes = [];
+    const pattern = /([A-Za-z_][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/gu;
+    let match;
+    while ((match = pattern.exec(tag.value))) {
+      const name = match[1];
+      if (/^xmlns(?::|$)/iu.test(name)) continue;
+      const rawValue = match[2] ?? match[3];
+      const quote = match[2] !== undefined ? '"' : "'";
+      const quoteOffset = match[0].indexOf(quote);
+      const start = tag.start + match.index + quoteOffset + 1;
+      attributes.push({
+        name,
+        quote,
+        start,
+        end: start + rawValue.length,
+        value: decodeXmlAttribute(rawValue),
+      });
+    }
+    return attributes;
+  }
+
+  function scanPropertyXml(xml) {
+    const source = String(xml || "");
+    const groups = [];
+    const textNodes = [];
+    const attributes = [];
+    const stack = [];
+    let root = null;
+    let cursor = 0;
+
+    const addTextNode = (start, end, encoding = "text") => {
+      if (end <= start) return;
+      const rawValue = source.slice(start, end);
+      if (encoding === "text" && /^\s*$/u.test(rawValue)) return;
+      const group = stack.at(-1)?.group || null;
+      const node = {
+        start,
+        end,
+        value: encoding === "cdata" ? rawValue : decodeXmlText(rawValue),
+        encoding,
+        group,
+      };
+      textNodes.push(node);
+      if (group) group.textNodes.push(node);
+    };
+
+    for (const tag of xmlTagRanges(source)) {
+      addTextNode(cursor, tag.start);
+      if (tag.value.startsWith("<![CDATA[")) {
+        addTextNode(tag.start + 9, tag.end - 3, "cdata");
+        cursor = tag.end;
+        continue;
+      }
+      const parsed = parsedXmlTag(tag);
+      if (parsed) {
+        if (parsed.closing) {
+          const element = stack.pop();
+          if (!element || element.name !== parsed.name) {
+            throw new Error("DOCX содержит некорректно вложенные свойства XML");
+          }
+        } else {
+          attributes.push(...xmlAttributeNodes(tag));
+          const parent = stack.at(-1) || null;
+          const element = {
+            name: parsed.name,
+            parent,
+            group: null,
+            textNodes: [],
+          };
+          if (!root) {
+            root = element;
+          } else if (parent === root) {
+            element.group = element;
+            groups.push(element);
+          } else {
+            element.group = parent?.group || null;
+          }
+          if (!parsed.selfClosing) stack.push(element);
+        }
+      }
+      cursor = tag.end;
+    }
+    addTextNode(cursor, source.length);
+    if (stack.length) throw new Error("DOCX содержит незавершённые свойства XML");
+    return { source, groups, textNodes, attributes };
+  }
+
+  function propertyTextReplacements(nodes, stats) {
+    if (!nodes.length) return [];
+    const value = nodes.map((node) => node.value).join("");
+    const ranges = brandRanges(value);
+    if (!ranges.length) return [];
+    stats.mentionsRemoved += ranges.length;
+    const removalRanges = isHeaderFooterBoilerplate(value)
+      ? [[0, value.length]]
+      : ranges;
+    return textNodeReplacements(nodes, removalRanges);
   }
 
   function cleanPropertyXml(xml) {
-    return String(xml || "").replace(
-      /<([A-Za-z_][\w:.-]*)\b([^>]*)>([^<]*)<\/\1>/gu,
-      (full, tag, attributes, text) =>
-        containsBrand(text) ? `<${tag}${attributes}></${tag}>` : full
+    const scanned = scanPropertyXml(xml);
+    const stats = { mentionsRemoved: 0 };
+    const replacements = [];
+    const groupedNodes = new Set();
+    for (const group of scanned.groups) {
+      group.textNodes.forEach((node) => groupedNodes.add(node));
+      replacements.push(...propertyTextReplacements(group.textNodes, stats));
+    }
+    for (const node of scanned.textNodes) {
+      if (!groupedNodes.has(node)) {
+        replacements.push(...propertyTextReplacements([node], stats));
+      }
+    }
+    for (const attribute of scanned.attributes) {
+      const ranges = brandRanges(attribute.value);
+      if (!ranges.length) continue;
+      stats.mentionsRemoved += ranges.length;
+      const cleaned = cleanTextNodeValue(attribute.value, 0, ranges);
+      replacements.push({
+        start: attribute.start,
+        end: attribute.end,
+        value: escapeXmlAttribute(cleaned, attribute.quote),
+      });
+    }
+    return {
+      xml: applyXmlReplacements(scanned.source, replacements),
+      mentionsRemoved: stats.mentionsRemoved,
+    };
+  }
+
+  function remainingPropertyMentions(xml) {
+    const scanned = scanPropertyXml(xml);
+    let remaining = 0;
+    const groupedNodes = new Set();
+    for (const group of scanned.groups) {
+      group.textNodes.forEach((node) => groupedNodes.add(node));
+      remaining += brandRanges(group.textNodes.map((node) => node.value).join("")).length;
+    }
+    for (const node of scanned.textNodes) {
+      if (!groupedNodes.has(node)) remaining += brandRanges(node.value).length;
+    }
+    for (const attribute of scanned.attributes) {
+      remaining += brandRanges(attribute.value).length;
+    }
+    return remaining;
+  }
+
+  function decodeXmlEntities(value) {
+    return String(value || "").replace(
+      /&(?:#x([0-9A-Fa-f]+)|#([0-9]+)|(amp|quot|apos|lt|gt));/gu,
+      (entity, hex, decimal, named) => {
+        if (hex || decimal) {
+          const point = Number.parseInt(hex || decimal, hex ? 16 : 10);
+          return Number.isInteger(point) && point >= 0 && point <= 0x10ffff
+            ? String.fromCodePoint(point)
+            : entity;
+        }
+        return {
+          amp: "&",
+          quot: '"',
+          apos: "'",
+          lt: "<",
+          gt: ">",
+        }[named] || entity;
+      }
     );
   }
 
   function decodeXmlAttribute(value) {
-    return String(value || "")
-      .replace(/&amp;/gu, "&")
-      .replace(/&quot;/gu, '"')
-      .replace(/&apos;/gu, "'")
-      .replace(/&lt;/gu, "<")
-      .replace(/&gt;/gu, ">");
+    return decodeXmlEntities(value);
   }
 
   function relationshipTargets(xml) {
     const targets = [];
-    const pattern = /<Relationship\b([^>]*)\/?\s*>/giu;
-    let match;
-    while ((match = pattern.exec(String(xml || "")))) {
-      const attributes = match[1];
-      const target = attributes.match(/\bTarget\s*=\s*(?:"([^"]*)"|'([^']*)')/iu);
+    for (const match of String(xml || "").matchAll(relationshipElementPattern())) {
+      const relationship = match[0];
+      const target = relationship.match(/\bTarget\s*=\s*(?:"([^"]*)"|'([^']*)')/iu);
       if (!target) continue;
-      const external = /\bTargetMode\s*=\s*(?:"External"|'External')/iu.test(attributes);
+      const external = /\bTargetMode\s*=\s*(?:"External"|'External')/iu.test(
+        relationship
+      );
       targets.push({ target: decodeXmlAttribute(target[1] ?? target[2]), external });
     }
     return targets;
   }
 
+  const RELATIONSHIP_QNAME_SOURCE =
+    "(?:[A-Za-z_][\\w.-]*:)?Relationship";
+
+  function relationshipElementPattern() {
+    return new RegExp(
+      `<(${RELATIONSHIP_QNAME_SOURCE})\\b[^>]*(?:\\/\\s*>|>[\\s\\S]*?<\\/\\1\\s*>)`,
+      "giu"
+    );
+  }
+
+  function relationshipSourcePart(relsPath) {
+    const marker = "/_rels/";
+    const markerIndex = String(relsPath || "").indexOf(marker);
+    if (markerIndex < 0 || !String(relsPath).endsWith(".rels")) return "";
+    const directory = relsPath.slice(0, markerIndex);
+    const filename = relsPath.slice(markerIndex + marker.length, -5);
+    return `${directory}/${filename}`;
+  }
+
+  const OFFICE_RELATIONSHIP_NAMESPACES = new Set([
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships",
+  ]);
+
+  function regexEscape(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  }
+
+  function referencedRelationshipIds(xml) {
+    const source = String(xml || "");
+    const ids = new Set();
+    const prefixes = new Set(["r"]);
+    const namespacePattern =
+      /\bxmlns:([A-Za-z_][\w.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/gu;
+    let namespace;
+    while ((namespace = namespacePattern.exec(source))) {
+      const uri = decodeXmlAttribute(namespace[2] ?? namespace[3]);
+      if (OFFICE_RELATIONSHIP_NAMESPACES.has(uri)) prefixes.add(namespace[1]);
+    }
+    const prefixSource = [...prefixes].map(regexEscape).join("|");
+    const pattern = new RegExp(
+      `\\b(?:${prefixSource}):(?:id|embed|link)\\s*=\\s*(?:"([^"]+)"|'([^']+)')`,
+      "giu"
+    );
+    let match;
+    while ((match = pattern.exec(source))) ids.add(decodeXmlAttribute(match[1] ?? match[2]));
+    return ids;
+  }
+
+  function pruneUnusedPartRelationships(xml, relsPath, usedIds, removedTargets) {
+    return String(xml || "").replace(
+      relationshipElementPattern(),
+      (relationship) => {
+        const id = relationship.match(/\bId\s*=\s*(?:"([^"]+)"|'([^']+)')/iu);
+        const idValue = id ? decodeXmlAttribute(id[1] ?? id[2]) : "";
+        if (!id || usedIds.has(idValue)) return relationship;
+        if (!/\bTargetMode\s*=\s*(?:"External"|'External')/iu.test(relationship)) {
+          const target = relationship.match(
+            /\bTarget\s*=\s*(?:"([^"]+)"|'([^']+)')/iu
+          );
+          const resolved = target
+            ? resolveRelationshipTarget(
+                relsPath,
+                decodeXmlAttribute(target[1] ?? target[2])
+              )
+            : null;
+          if (resolved) removedTargets.add(resolved);
+        }
+        return "";
+      }
+    );
+  }
+
   function pruneDeletedRelationships(xml, relsPath, deleted) {
     return String(xml || "").replace(
-      /<Relationship\b[^>]*(?:\/\s*>|>[\s\S]*?<\/Relationship>)/giu,
+      relationshipElementPattern(),
       (relationship) => {
         if (/\bTargetMode\s*=\s*(?:"External"|'External')/iu.test(relationship)) {
           return relationship;
@@ -487,14 +1190,17 @@
     const deleted = new Set();
     const replacements = new Map();
     const relationshipXml = new Map();
-    const removedRelationshipTargets = new Set();
-    const remainingRelationshipTargets = new Set();
     const stats = {
       headersCleaned: 0,
       footersCleaned: 0,
       propertiesCleared: 0,
       mediaRemoved: 0,
       thumbnailsRemoved: 0,
+      bodyPartsCleaned: 0,
+      brandMentionsRemoved: 0,
+      protectedNotes: 0,
+      serviceBlocksRemoved: 0,
+      remainingMentions: 0,
     };
 
     for (const entry of entries) {
@@ -505,37 +1211,69 @@
 
     for (const entry of entries) {
       if (/^word\/header[^/]*\.xml$/iu.test(entry.name)) {
-        replacements.set(entry.name, encoder.encode(cleanHeaderXml(await entryText(entry))));
+        const cleaned = cleanHeaderXml(await entryText(entry));
+        replacements.set(entry.name, encoder.encode(cleaned.xml));
         stats.headersCleaned += 1;
+        stats.brandMentionsRemoved += cleaned.mentionsRemoved;
+        stats.protectedNotes += cleaned.protectedNotes;
+        stats.serviceBlocksRemoved += cleaned.serviceBlocksRemoved;
       } else if (/^word\/footer[^/]*\.xml$/iu.test(entry.name)) {
-        replacements.set(entry.name, encoder.encode(cleanFooterXml(await entryText(entry))));
+        const cleaned = cleanFooterXml(await entryText(entry));
+        replacements.set(entry.name, encoder.encode(cleaned.xml));
         stats.footersCleaned += 1;
+        stats.brandMentionsRemoved += cleaned.mentionsRemoved;
+        stats.protectedNotes += cleaned.protectedNotes;
+        stats.serviceBlocksRemoved += cleaned.serviceBlocksRemoved;
+      } else if (/^word\/.*\.xml$/iu.test(entry.name)) {
+        const original = await entryText(entry);
+        const cleaned = cleanWordTextXml(original);
+        if (cleaned.xml !== original) {
+          replacements.set(entry.name, encoder.encode(cleaned.xml));
+          stats.bodyPartsCleaned += 1;
+        }
+        stats.brandMentionsRemoved += cleaned.mentionsRemoved;
+        stats.protectedNotes += cleaned.protectedNotes;
+        stats.serviceBlocksRemoved += cleaned.serviceBlocksRemoved;
       } else if (/^docProps\/[^/]+\.xml$/iu.test(entry.name)) {
         const original = await entryText(entry);
         const cleaned = cleanPropertyXml(original);
-        if (cleaned !== original) {
-          replacements.set(entry.name, encoder.encode(cleaned));
+        if (cleaned.xml !== original) {
+          replacements.set(entry.name, encoder.encode(cleaned.xml));
           stats.propertiesCleared += 1;
         }
+        stats.brandMentionsRemoved += cleaned.mentionsRemoved;
       } else if (/^docProps\/thumbnail\.[^/]+$/iu.test(entry.name)) {
         deleted.add(entry.name);
         stats.thumbnailsRemoved += 1;
       }
     }
 
-    for (const [relsPath, xml] of relationshipXml) {
-      const isHeaderFooterRels = /^word\/_rels\/(?:header|footer)[^/]*\.xml\.rels$/iu.test(
-        relsPath
-      );
+    const removedRelationshipTargets = new Set();
+    const remainingRelationshipTargets = new Set();
+    for (const [relsPath, originalXml] of relationshipXml) {
+      let xml = originalXml;
+      if (/^word\/_rels\/(?:header|footer)[^/]*\.xml\.rels$/iu.test(relsPath)) {
+        const sourcePart = relationshipSourcePart(relsPath);
+        const sourceReplacement = replacements.get(sourcePart);
+        const sourceXml = sourceReplacement
+          ? decoder.decode(sourceReplacement)
+          : entryByName.has(sourcePart)
+            ? await entryText(entryByName.get(sourcePart))
+            : "";
+        xml = pruneUnusedPartRelationships(
+          xml,
+          relsPath,
+          referencedRelationshipIds(sourceXml),
+          removedRelationshipTargets
+        );
+        if (xml !== originalXml) replacements.set(relsPath, encoder.encode(xml));
+        relationshipXml.set(relsPath, xml);
+      }
       for (const relationship of relationshipTargets(xml)) {
         if (relationship.external) continue;
         const resolved = resolveRelationshipTarget(relsPath, relationship.target);
-        if (!resolved) continue;
-        (isHeaderFooterRels ? removedRelationshipTargets : remainingRelationshipTargets).add(
-          resolved
-        );
+        if (resolved) remainingRelationshipTargets.add(resolved);
       }
-      if (isHeaderFooterRels) deleted.add(relsPath);
     }
 
     for (const target of removedRelationshipTargets) {
@@ -560,6 +1298,27 @@
     const cleanContentTypes = pruneDeletedContentTypes(contentTypesXml, deleted);
     if (cleanContentTypes !== contentTypesXml) {
       replacements.set("[Content_Types].xml", encoder.encode(cleanContentTypes));
+    }
+
+    for (const entry of entries) {
+      if (deleted.has(entry.name)) continue;
+      const replacement = replacements.get(entry.name);
+      const xml = replacement
+        ? decoder.decode(replacement)
+        : /^(?:word\/.*|docProps\/[^/]+)\.xml$/iu.test(entry.name)
+          ? await entryText(entry)
+          : "";
+      if (!xml) continue;
+      if (/^word\/.*\.xml$/iu.test(entry.name)) {
+        stats.remainingMentions += remainingWordMentions(xml);
+      } else if (/^docProps\/[^/]+\.xml$/iu.test(entry.name)) {
+        stats.remainingMentions += remainingPropertyMentions(xml);
+      }
+    }
+    if (stats.remainingMentions) {
+      throw new Error(
+        "Не удалось полностью удалить упоминания КонсультантПлюс из Word-файла"
+      );
     }
 
     const outputEntries = [];

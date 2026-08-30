@@ -39,6 +39,25 @@ test("filename templates render every supported token and add one extension", ()
   assert.doesNotMatch(result.filename, /\.pdf\.pdf$/u);
 });
 
+test("Markdown filename templates replace source extensions for English and Russian names", () => {
+  assert.equal(
+    consRenderFilenameTemplate(
+      "{title}",
+      { title: "document.pdf", index: 1, total: 1 },
+      "md"
+    ).filename,
+    "document.md"
+  );
+  assert.equal(
+    consRenderFilenameTemplate(
+      "{title}",
+      { title: "Решение суда.docx", index: 1, total: 1 },
+      "md"
+    ).filename,
+    "Решение суда.md"
+  );
+});
+
 test("unknown tokens block a profile", () => {
   const result = consValidateTemplate("{client} - {title}", "filename");
   assert.equal(result.ok, false);
