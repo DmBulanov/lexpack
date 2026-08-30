@@ -20,6 +20,13 @@ test("the simplified 0.8 line starts downloads directly and has no planner page"
   assert.match(source, /`Скачать \$\{selected\} \$\{documentWord\(selected\)\}`/);
 });
 
+test("popup exposes Markdown and keeps RTF unavailable", () => {
+  assert.equal((html.match(/<option value="md">Markdown<\/option>/g) || []).length, 1);
+  assert.doesNotMatch(html, /<option value="rtf">/i);
+  assert.match(source, /storedFormat === "rtf"/);
+  assert.match(source, /lastFormat: "docx"/);
+});
+
 test("cached result provenance is exported with the cached list", () => {
   assert.match(source, /let cachedQuery = ""/);
   assert.match(source, /let cachedScope = "current-list"/);

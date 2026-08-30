@@ -46,7 +46,7 @@
     "docTextLen",
   ]);
 
-  const CONS_FORMATS = Object.freeze(["docx", "pdf", "rtf", "txt", "html"]);
+  const CONS_FORMATS = Object.freeze(["docx", "pdf", "txt", "md", "html"]);
   const CONS_JUDICIAL_INSTANCES = Object.freeze([
     "higher-courts",
     "arbitration-circuit",
@@ -64,12 +64,12 @@
       search: true,
       scopes: Object.freeze(["practice", "all"]),
       exportFormats: CONS_FORMATS,
-      nativeFormats: Object.freeze(["docx", "pdf", "rtf"]),
+      nativeFormats: Object.freeze(["docx", "pdf"]),
     }),
     "public-site": Object.freeze({
       search: true,
       scopes: Object.freeze(["all"]),
-      exportFormats: Object.freeze(["txt", "html"]),
+      exportFormats: Object.freeze(["txt", "md", "html"]),
       nativeFormats: Object.freeze([]),
     }),
   });
@@ -207,6 +207,28 @@
       throw new Error(`Формат ${normalized.toUpperCase()} недоступен для ${adapterId}`);
     }
     return normalized;
+  }
+
+  function consBuildTextExportBody(doc, format = "txt") {
+    const normalized = String(format || "").toLowerCase();
+    if (!["txt", "md"].includes(normalized)) {
+      throw new Error(`Неподдерживаемый текстовый формат: ${format}`);
+    }
+    const source =
+      normalized === "md" && doc?.markdown !== undefined
+        ? doc.markdown
+        : doc?.text;
+    const body = String(source ?? "");
+    if (new TextEncoder().encode(body).byteLength > 32 * 1024 * 1024) {
+      throw new Error("Текст документа превышает безопасный лимит 32 МБ");
+    }
+    return {
+      body,
+      mime:
+        normalized === "md"
+          ? "text/markdown; charset=utf-8"
+          : "text/plain;charset=utf-8",
+    };
   }
 
   function consSanitizePathSegment(segment) {
@@ -466,6 +488,7 @@
     CONS_JUDICIAL_INSTANCES,
     CONS_JUDICIAL_INSTANCE_LABELS,
     consAssertFormatSupported,
+    consBuildTextExportBody,
     consBuildOnlineSearchUrl,
     consBuildPublicSearchUrl,
     consNormalizeJudicialInstances,

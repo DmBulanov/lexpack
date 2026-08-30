@@ -3,6 +3,7 @@
 importScripts("../shared/variant-config.js");
 importScripts("../shared/filename.js");
 importScripts("../shared/runtime.js");
+importScripts("../shared/content-cleaner.js");
 importScripts("export-job.js");
 importScripts("search-flow.js");
 
@@ -36,6 +37,7 @@ const CONTENT_SCRIPT_FILES = [
   "shared/variant-config.js",
   "shared/filename.js",
   "shared/runtime.js",
+  "shared/content-cleaner.js",
   "content/adapters/public-site.js",
   "content/adapters/online-app.js",
   "content/content.js",
@@ -261,11 +263,9 @@ async function buildExportBody(doc, format, fallbackUrl = "") {
     return { body: response.html, mime: "text/html;charset=utf-8" };
   }
 
-  const text = String(doc?.text || "");
-  if (new TextEncoder().encode(text).byteLength > 32 * 1024 * 1024) {
-    throw new Error("Текст документа превышает безопасный лимит 32 МБ");
-  }
-  return { body: text, mime: "text/plain;charset=utf-8" };
+  const result = consBuildTextExportBody(doc, format);
+  consAssertConsultantTextClean(result.body);
+  return result;
 }
 
 async function createBlobUrl(content, mime) {
@@ -340,10 +340,7 @@ function createCancelGuard(current) {
   if (!current?.downloadKind) return null;
   return {
     ...current,
-    expiresAt: Math.max(
-      Date.now() + 2000,
-      Number(current.downloadStartedAt || Date.now()) + 32000
-    ),
+    expiresAt: consCancelGuardExpiresAt(current, NATIVE_DOWNLOAD_CONFIG),
   };
 }
 
@@ -396,6 +393,10 @@ async function cancelGuardedDownload(job, downloadItem) {
 
 async function attachCreatedDownload(downloadItem) {
   const job = await readJob();
+  if (job?.cancelGuard && matchesCurrentDownload(downloadItem, job.cancelGuard)) {
+    await cancelGuardedDownload(job, downloadItem);
+    return;
+  }
   if (job?.stopRequested || job?.status === "stopping") {
     await cancelGuardedDownload(job, downloadItem);
     return;
@@ -681,7 +682,9 @@ async function waitDocumentReady(tabId, format, jobId) {
       } else if (ping.adapter === "public-site" && ping.capabilities?.documentReady) {
         return ping;
       } else if (ping.adapter === "online-app" && ping.capabilities?.documentReady) {
-        const native = ["docx", "pdf", "rtf"].includes(format);
+        const native = consGetAdapterCapabilities("online-app").nativeFormats.includes(
+          format
+        );
         const nativeReady =
           format === "docx"
             ? ping.capabilities.wordSaveReady || ping.capabilities.menuSaveReady
@@ -841,6 +844,7 @@ async function processExportItem(job, itemIndex) {
               consultantDataRemoved: true,
               pageNumberPreserved: true,
               documentBodyPreserved: true,
+              protectedNotesPreserved: true,
             }
           : null;
       await updateCurrent(
@@ -870,7 +874,8 @@ async function processExportItem(job, itemIndex) {
         job.format === "docx" &&
         (extracted.doc.contentCleanup?.consultantDataRemoved !== true ||
           extracted.doc.contentCleanup?.pageNumberPreserved !== true ||
-          extracted.doc.contentCleanup?.documentBodyPreserved !== true)
+          extracted.doc.contentCleanup?.documentBodyPreserved !== true ||
+          extracted.doc.contentCleanup?.protectedNotesPreserved !== true)
       ) {
         throw new Error("Word-файл не подтвердил локальную очистку");
       }
@@ -914,6 +919,7 @@ async function processExportItem(job, itemIndex) {
         downloadKind: "direct",
         downloadStartedAt: startedAt,
         expectedFilename,
+        contentCleanup: extracted.doc.contentCleanup || null,
       },
       "starting_download"
     );
@@ -932,6 +938,7 @@ async function processExportItem(job, itemIndex) {
     return {
       downloadId: download.downloadId,
       filename: downloadBasename(completed, expectedFilename),
+      contentCleanup: extracted.doc.contentCleanup || null,
     };
   } finally {
     await cleanupResources(await readJob());
@@ -1110,6 +1117,43 @@ async function runStoredJob() {
   if (!consIsJobActive(job)) {
     await clearResumeAlarmBestEffort();
     return;
+  }
+
+  try {
+    consAssertFormatSupported(job.adapter, job.format);
+  } catch {
+    const cancelGuard = createCancelGuard(job.current);
+    if (cancelGuard) {
+      await mutateJob((draft) => {
+        if (draft.id === job.id) {
+          draft.cancelGuard = cancelGuard;
+          draft.stopRequested = true;
+          draft.status = "stopping";
+          consAppendDownloadDiagnostic(draft, "DG_ARMED");
+        }
+        return draft;
+      });
+      try {
+        const matches = await findRecentDownloads(job.current);
+        let cancelledCount = 0;
+        for (const match of matches) {
+          if (match.state !== "in_progress") continue;
+          await chrome.downloads.cancel(match.id);
+          cancelledCount += 1;
+        }
+        if (cancelledCount) {
+          await appendDownloadDiagnostic(job.id, "DG_CANCEL_EXISTING", cancelledCount);
+        }
+      } catch {
+        await appendDownloadDiagnostic(job.id, "DG_SCAN_FAILED");
+      }
+    }
+    await cleanupResources(await readJob(), true);
+    throw new Error(
+      String(job.format || "").toLowerCase() === "rtf"
+        ? "Сохранённая задача использует отключённый формат RTF; создайте новую выгрузку"
+        : "Сохранённая задача использует неподдерживаемый формат"
+    );
   }
 
   while (job && consIsJobActive(job)) {
@@ -2058,7 +2102,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (!message.doc || message.doc.nativeSaveTriggered) {
           return { ok: false, error: "Используйте START_CURRENT_EXPORT для нативного формата" };
         }
-        const format = ["html", "txt"].includes(message.format) ? message.format : null;
+        const format = ["html", "txt", "md"].includes(message.format) ? message.format : null;
         if (!format) return { ok: false, error: "Неподдерживаемый прямой формат" };
         const filename = consSafeFilename(message.doc.title, message.index, format);
         const { body, mime } = await buildExportBody(message.doc, format, message.doc.url);

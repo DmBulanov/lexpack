@@ -1,6 +1,13 @@
 /** Sanitize a document title into a safe Windows/macOS filename. */
 function consSafeFilename(title, index, ext) {
-  let name = String(title || "document")
+  const safeExt = String(ext || "txt")
+    .toLowerCase()
+    .replace(/^\./, "")
+    .replace(/[^a-z0-9]/g, "") || "txt";
+  const sourceTitle = safeExt === "md"
+    ? String(title || "").replace(/\.(?:pdf|docx|md)$/iu, "")
+    : title;
+  let name = String(sourceTitle || "document")
     .normalize("NFKC")
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
     .replace(/\s+/g, " ")
@@ -11,10 +18,6 @@ function consSafeFilename(title, index, ext) {
   if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) {
     name = `_${name}`;
   }
-  const safeExt = String(ext || "txt")
-    .toLowerCase()
-    .replace(/^\./, "")
-    .replace(/[^a-z0-9]/g, "") || "txt";
   const parsedIndex = Number(index);
   const num = Number.isInteger(parsedIndex) && parsedIndex >= 0
     ? `${String(parsedIndex).padStart(2, "0")} - `

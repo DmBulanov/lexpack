@@ -455,7 +455,13 @@ async function init() {
     "settingsSchemaVersion",
   ]);
   if (stored.lastScope) els.scope.value = stored.lastScope;
-  if (stored.lastFormat) els.format.value = stored.lastFormat;
+  const storedFormat = String(stored.lastFormat || "").toLowerCase();
+  if (CONS_FORMATS.includes(storedFormat)) {
+    els.format.value = storedFormat;
+  } else if (storedFormat === "rtf") {
+    els.format.value = "docx";
+    await chrome.storage.local.set({ lastFormat: "docx" });
+  }
   const storedInstances = consNormalizeJudicialInstances(stored.lastInstances);
   if (storedInstances.length) {
     for (const input of els.instanceInputs) {

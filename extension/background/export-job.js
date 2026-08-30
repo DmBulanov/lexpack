@@ -59,6 +59,32 @@
     return Boolean(job && ACTIVE_JOB_STATUSES.has(job.status));
   }
 
+  function consCancelGuardExpiresAt(current, nativeDownloads = {}, now = Date.now()) {
+    if (!current?.downloadKind) return null;
+
+    const currentTime = Number(now);
+    const safeNow = Number.isFinite(currentTime) ? currentTime : Date.now();
+    const downloadStartedAt = Number(current.downloadStartedAt);
+    const guardStartedAt =
+      Number.isFinite(downloadStartedAt) && downloadStartedAt > 0
+        ? downloadStartedAt
+        : safeNow;
+    let guardWindowMs = 32000;
+
+    if (current.downloadKind === "native") {
+      const matchWindowMs = Number(nativeDownloads.matchWindowMs) || 0;
+      const startTimeoutMs = Number(nativeDownloads.startTimeoutMs) || 0;
+      const lateRecoveryGraceMs = Number(nativeDownloads.lateRecoveryGraceMs) || 0;
+      guardWindowMs = Math.max(
+        guardWindowMs,
+        matchWindowMs,
+        startTimeoutMs + lateRecoveryGraceMs
+      );
+    }
+
+    return Math.max(safeNow + 2000, guardStartedAt + guardWindowMs);
+  }
+
   function consAppendJobLog(job, line, now = Date.now()) {
     const entry = `${new Date(now).toLocaleTimeString()} ${line}`;
     job.log = [...(job.log || []).slice(-99), entry];
@@ -176,6 +202,7 @@
   const api = {
     consAppendJobLog,
     consAppendDownloadDiagnostic,
+    consCancelGuardExpiresAt,
     consCreateExportJob,
     consFinishJob,
     consIsJobActive,

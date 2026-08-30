@@ -8,6 +8,11 @@ const {
   consBuildOnlineSearchUrl,
   consBuildPublicSearchUrl,
 } = require("../extension/shared/runtime.js");
+const {
+  consCleanConsultantDocument,
+  consRemoveConsultantMentions,
+  consSerializeConsultantText,
+} = require("../extension/shared/content-cleaner.js");
 
 const root = path.resolve(__dirname, "..");
 const publicAdapterSource = fs.readFileSync(
@@ -72,6 +77,9 @@ function loadAdapter(source, name, { location, document, extras = {} }) {
     clearInterval,
     consBuildOnlineSearchUrl,
     consBuildPublicSearchUrl,
+    consCleanConsultantDocument,
+    consRemoveConsultantMentions,
+    consSerializeConsultantText,
     ...extras,
   });
   vm.runInContext(source, context, { filename: `${name}.js` });
@@ -130,6 +138,7 @@ test("public adapter advertises and enforces only the scope it can apply", async
   });
 
   assert.deepEqual(Array.from(adapter.getCapabilities("list").searchScopes), ["all"]);
+  assert.ok(adapter.getCapabilities("list").exportFormats.includes("md"));
   assert.equal(adapter.matches("https://evilconsultant.ru/search/?q=test"), false);
   await assert.rejects(
     adapter.runSearch("test", { scope: "practice" }),
@@ -154,6 +163,10 @@ test("online adapter reports login as AUTH_REQUIRED and never treats it as a sea
   assert.equal(adapter.detectPage(), "auth-required");
   assert.equal(adapter.getCapabilities().search, false);
   assert.equal(adapter.getCapabilities().documentReady, false);
+  assert.ok(adapter.getCapabilities().exportFormats.includes("md"));
+  assert.ok(adapter.getCapabilities().exportFormats.includes("docx"));
+  assert.ok(adapter.getCapabilities().exportFormats.includes("pdf"));
+  assert.equal(adapter.getCapabilities().exportFormats.includes("rtf"), false);
   await assert.rejects(
     adapter.runSearch("claim", { scope: "practice" }),
     (error) => error.code === "AUTH_REQUIRED"
@@ -212,6 +225,10 @@ test("online direct export fails safely when the document pane is not ready", as
   await assert.rejects(
     adapter.extractCurrentDocument({ format: "txt" }),
     (error) => error.code === "DOCUMENT_NOT_READY"
+  );
+  await assert.rejects(
+    adapter.extractCurrentDocument({ format: "rtf" }),
+    (error) => error.code === "UNSUPPORTED_FORMAT"
   );
 });
 

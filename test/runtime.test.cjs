@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const {
   consAssertFormatSupported,
+  consBuildTextExportBody,
   consBuildOnlineSearchUrl,
   consBuildPublicSearchUrl,
   consBuildSafeDiagnosticsSnapshot,
@@ -154,11 +155,29 @@ test("document URLs are constrained by adapter and reject credentials", () => {
 
 test("format capabilities reject silent public-site fallback", () => {
   assert.equal(consAssertFormatSupported("public-site", "html"), "html");
+  assert.equal(consAssertFormatSupported("public-site", "md"), "md");
   assert.throws(
     () => consAssertFormatSupported("public-site", "docx"),
     /DOCX недоступен/
   );
   assert.equal(consAssertFormatSupported("online-app", "docx"), "docx");
+  assert.equal(consAssertFormatSupported("online-app", "md"), "md");
+  assert.throws(
+    () => consAssertFormatSupported("online-app", "rtf"),
+    /Неизвестный формат: rtf/
+  );
+});
+
+test("Markdown download body is unchanged UTF-8 text with the exact MIME type", () => {
+  const markdown = "# Русский заголовок\r\n\r\n**bold** & <raw-tag>\r\n`код_[x]` 😀 е\u0308\r\n";
+  const result = consBuildTextExportBody({ text: "fallback", markdown }, "md");
+
+  assert.deepEqual(result, {
+    body: markdown,
+    mime: "text/markdown; charset=utf-8",
+  });
+  assert.deepEqual(Buffer.from(result.body, "utf8"), Buffer.from(markdown, "utf8"));
+  assert.equal(consBuildTextExportBody({ text: markdown }, "md").body, markdown);
 });
 
 test("folder sanitization removes traversal, reserved names, and invalid characters", () => {

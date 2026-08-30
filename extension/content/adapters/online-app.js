@@ -12,18 +12,11 @@
 (function () {
   const FORMAT_MATCH = {
     docx: /формате\s*DOCX/i,
-    rtf: /формате\s*RTF/i,
-    txt: /без форматирования/i,
-    txt_unicode: /UNICODE/i,
     pdf: /формате\s*PDF(?!\s*для)/i,
-    pdf_ebook: /эл\.?\s*книг/i,
-    epub: /EPUB/i,
-    html: /формате\s*HTML/i,
-    fb2: /FB2/i,
-    xml: /Word 2003 XML|XML/i,
   };
 
-  const NATIVE_FORMATS = new Set(Object.keys(FORMAT_MATCH));
+  const NATIVE_FORMATS = new Set(["docx", "pdf"]);
+  const SUPPORTED_EXPORT_FORMATS = new Set(["docx", "word", "pdf", "txt", "md", "html"]);
   const DOCX_CLEANER_CHANNEL = "LEXPACK_DOCX_CLEANER_V1";
   const DOCX_CLEANER_ARM_TIMEOUT_MS = 2000;
   const DOCX_CLEANER_COMPLETION_TIMEOUT_MS = 40000;
@@ -240,7 +233,7 @@
         documentReady,
         wordSaveReady: documentReady && Boolean(document.querySelector("button.word")),
         menuSaveReady: documentReady && Boolean(document.querySelector("button.dots")),
-        exportFormats: ["docx", "pdf", "rtf", "txt", "html"],
+        exportFormats: ["docx", "pdf", "txt", "md", "html"],
         nativeSave: documentReady,
       };
     },
@@ -903,7 +896,7 @@
     },
 
     _docTitle() {
-      return (
+      const title =
         document.title.replace(/\s*[-–|]\s*КонсультантПлюс.*$/i, "").trim() ||
         document
           .querySelector(".pageContainer, .x-page-document-content")
@@ -911,8 +904,10 @@
           ?.split("\n")
           .find((l) => l.trim().length > 10)
           ?.trim() ||
-        "document"
-      );
+        "document";
+      return consRemoveConsultantMentions(title).text
+        .replace(/\s*[-–—|]\s*$/u, "")
+        .trim() || "document";
     },
 
     getDocumentTitle() {
@@ -984,13 +979,19 @@
 
     async extractCurrentDocument(options = {}) {
       const format = (options.format || "docx").toLowerCase();
+      if (!SUPPORTED_EXPORT_FORMATS.has(format)) {
+        throw adapterError(
+          "UNSUPPORTED_FORMAT",
+          `Формат «${format || "не указан"}» не поддерживается`
+        );
+      }
       const title = this._docTitle();
 
       // Word export is intercepted in the page's main world, sanitized locally,
       // and only then handed to the browser download pipeline.
       if (format === "docx" || format === "word") {
         const wordBtn = document.querySelector("button.word");
-        await triggerCleanDocxDownload(async () => {
+        const cleanupStats = await triggerCleanDocxDownload(async () => {
           if (wordBtn) {
             wordBtn.click();
             await sleep(800);
@@ -1007,13 +1008,15 @@
             consultantDataRemoved: true,
             pageNumberPreserved: true,
             documentBodyPreserved: true,
+            protectedNotesPreserved: true,
+            brandMentionsRemoved: Number(cleanupStats.brandMentionsRemoved || 0),
           },
           url: location.href,
           format: "docx",
         };
       }
 
-      if (NATIVE_FORMATS.has(format) && format !== "html" && format !== "txt") {
+      if (NATIVE_FORMATS.has(format)) {
         await this.nativeSave(format);
         return {
           title,
@@ -1035,18 +1038,36 @@
       }
 
       const clone = root.cloneNode(true);
-      clone
-        .querySelectorAll("script, style, .contextToolbar, .contextPanel")
-        .forEach((el) => el.remove());
+      const cleanupStats = consCleanConsultantDocument(clone, {
+        removeSelectors: [
+          "script, style, template, iframe, noscript",
+          "button, form, input, textarea, select, progress",
+          "[role='button'], [role='menu'], [role='dialog'], [role='navigation']",
+          ".contextToolbar, .contextPanel, .x-menu",
+        ],
+      });
 
-      const text = clone.innerText.replace(/\n{3,}/g, "\n\n").trim();
+      const text = consSerializeConsultantText(clone)
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
       const html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(
         title
       )}</title><link rel="canonical" href="${escapeHtml(
         location.href
       )}"></head><body>${clone.innerHTML}</body></html>`;
 
-      return { title, text, html, url: location.href, format };
+      return {
+        title,
+        text,
+        html,
+        url: location.href,
+        format,
+        contentCleanup: {
+          consultantDataRemoved: true,
+          protectedNotesPreserved: true,
+          brandMentionsRemoved: cleanupStats.mentionsRemoved,
+        },
+      };
     },
 
     /** Move to next document in current search hit-list (if available). */

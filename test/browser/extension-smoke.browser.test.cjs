@@ -188,6 +188,44 @@ test(`unpacked ${variant.id} MV3 extension starts its service worker in Chromium
   assert.match(await popup.locator("#progressInfo").innerText(), /проверьте файл/);
   await popup.keyboard.press("Escape");
 
+  const retiredRtfJob = await worker.evaluate(async () => {
+    const startedAt = Date.now();
+    await chrome.storage.session.set({
+      exportJob: {
+        id: "retired-rtf-job",
+        adapter: "online-app",
+        format: "rtf",
+        status: "running",
+        phase: "waiting_download",
+        stopRequested: false,
+        items: [],
+        nextIndex: 0,
+        log: [],
+        downloadDiagnostics: [],
+        current: {
+          downloadKind: "native",
+          downloadStartedAt: startedAt,
+          expectedFilename: "01 - legacy.rtf",
+          sourceUrl:
+            "https://online.consultant.ru/riv/cgi/online.cgi?req=doc&base=LAW&n=1",
+          extensionId: chrome.runtime.id,
+        },
+      },
+    });
+    ensureExportRunner();
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const { exportJob } = await chrome.storage.session.get("exportJob");
+      if (exportJob?.status === "failed") return exportJob;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return (await chrome.storage.session.get("exportJob")).exportJob;
+  });
+  assert.equal(retiredRtfJob.status, "failed");
+  assert.match(retiredRtfJob.lastError, /отключённый формат RTF/);
+  assert.equal(retiredRtfJob.cancelGuard.expectedFilename, "01 - legacy.rtf");
+  assert.ok(retiredRtfJob.cancelGuard.expiresAt > Date.now());
+  await worker.evaluate(() => chrome.storage.session.remove("exportJob"));
+
   await worker.evaluate(async () => {
     await chrome.storage.local.set({
       lastQuery: "временный запрос",
@@ -208,6 +246,17 @@ test(`unpacked ${variant.id} MV3 extension starts its service worker in Chromium
     chrome.storage.local.get(["lastQuery", "rememberQuery"])
   );
   assert.deepEqual(removedLegacyQuery, {});
+  await worker.evaluate(() => chrome.storage.local.set({ lastFormat: "rtf" }));
+  await popup.reload();
+  await popup.waitForFunction(
+    () => document.querySelector("#format")?.value === "docx"
+  );
+  assert.equal(await popup.locator('#format option[value="rtf"]').count(), 0);
+  assert.equal(await popup.locator('#format option[value="md"]').count(), 1);
+  assert.deepEqual(
+    await worker.evaluate(() => chrome.storage.local.get("lastFormat")),
+    { lastFormat: "docx" }
+  );
   await popup.locator("details.online-tools").evaluate((element) => {
     element.open = true;
   });

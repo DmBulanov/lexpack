@@ -1,11 +1,11 @@
 {
   "id": "chrome",
   "browserLabel": "Chrome",
-  "archiveName": "lexpack-chrome-0.8.7.zip",
+  "archiveName": "lexpack-chrome-0.8.8.zip",
   "manifest": {
     "name": "LexPack — КонсультантПлюс (Chrome)",
-    "version": "0.8.7",
-    "versionName": "0.8.7-chrome",
+    "version": "0.8.8",
+    "versionName": "0.8.8-chrome",
     "minimumChromeVersion": "120",
     "description": "Сборка LexPack для Google Chrome: поиск и массовое сохранение документов КонсультантПлюс.",
     "actionTitle": "LexPack Chrome"

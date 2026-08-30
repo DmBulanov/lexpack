@@ -18,7 +18,7 @@ function brandedDocx() {
     "[Content_Types].xml": `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
     "_rels/.rels": `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rDoc" Target="word/document.xml" Type="officeDocument"/></Relationships>`,
     "docProps/core.xml": `<?xml version="1.0"?><cp:coreProperties xmlns:cp="urn:cp" xmlns:dc="urn:dc"><dc:creator>КонсультантПлюс</dc:creator></cp:coreProperties>`,
-    "word/document.xml": `<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Текст судебного решения</w:t></w:r></w:p></w:body></w:document>`,
+    "word/document.xml": `<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Текст судебного решения из Консультант</w:t></w:r><w:r><w:t>Плюс</w:t></w:r></w:p><w:p><w:r><w:t>КонсультантПлюс: примечание. КонсультантПлюс сохраняется.</w:t></w:r></w:p></w:body></w:document>`,
     "word/header1.xml": `<?xml version="1.0"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Документ предоставлен КонсультантПлюс</w:t></w:r></w:p><w:p><w:r><w:t>Решение суда</w:t></w:r></w:p></w:hdr>`,
     "word/footer1.xml": `<?xml version="1.0"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>www.consultant.ru</w:t></w:r></w:p></w:ftr>`,
   });
@@ -112,6 +112,8 @@ test(`the ${variant} online Word path downloads only the locally cleaned DOCX`, 
     consultantDataRemoved: true,
     pageNumberPreserved: true,
     documentBodyPreserved: true,
+    protectedNotesPreserved: true,
+    brandMentionsRemoved: 4,
   });
   assert.equal(download.suggestedFilename(), "branded-source.docx");
 
@@ -120,6 +122,11 @@ test(`the ${variant} online Word path downloads only the locally cleaned DOCX`, 
   const cleaned = await consInspectDocxArchive(cleanedBytes);
   const decode = (name) => new TextDecoder().decode(cleaned[name]);
   assert.match(decode("word/document.xml"), /Текст судебного решения/);
+  assert.doesNotMatch(decode("word/document.xml"), /из Консультант/iu);
+  assert.match(
+    decode("word/document.xml"),
+    /КонсультантПлюс: примечание\. КонсультантПлюс сохраняется\./u
+  );
   assert.match(decode("word/header1.xml"), /Решение суда/);
   assert.doesNotMatch(decode("word/header1.xml"), /Консультант|Consultant/iu);
   assert.match(decode("word/footer1.xml"), /w:instr=" PAGE "/);
