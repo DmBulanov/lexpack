@@ -4,7 +4,8 @@
  *
  * Calibrated 2026-07-18 against live session:
  *  - search list: a.x-page-components-search-result-item__extra-title
- *  - document body: .pageContainer.x-page-document-content
+ *  - document body (rechecked 2026-10-02): document_inner.htm → .document.content
+ *    (.pageContainer contains reference/AI-summary panels, not the act)
  *  - save: button.dots → «Сохранить в файл» → format row
  *  - quick Word: button.word
  *  - next in hit-list: button.next
@@ -20,9 +21,23 @@
   const DOCX_CLEANER_CHANNEL = "LEXPACK_DOCX_CLEANER_V1";
   const DOCX_CLEANER_ARM_TIMEOUT_MS = 2000;
   const DOCX_CLEANER_COMPLETION_TIMEOUT_MS = 40000;
+  const DOCUMENT_TEXT_TIMEOUT_MS = 12000;
+  const DOCUMENT_TEXT_STABLE_MS = 1200;
+  const DOCUMENT_UI_SELECTORS = [
+    "script, style, template, iframe, noscript",
+    "button, form, input, textarea, select, progress",
+    "[role='button'], [role='menu'], [role='dialog'], [role='navigation']",
+    ".contextToolbar, .contextPanel, .x-menu",
+    // These are site navigation/summary panels, not notes in the act.
+    ".page.esse, .page.aiBrief, .page.contents, .page.editions, .page.pictures",
+    ".page.multipwref, .page.similarsChoice, .rightPanel, .document.banners",
+    "[id='seeAlso'], .documentTitle, .documentLoader",
+  ];
 
   const SEARCH_SCOPES = Object.freeze(["all", "practice"]);
   const FULL_RESULTS_LINK_SELECTOR = ".x-pages-search-plus-results-link";
+  // These keys describe commands for automatic navigation, not every judicial
+  // branch that a user can open manually.
   const JUDICIAL_CATEGORY_PATTERNS = Object.freeze({
     "higher-courts": /^Решения высших судов$/i,
     "arbitration-circuit": /^Арбитражные суды округов$/i,
@@ -183,6 +198,58 @@
     );
   }
 
+  function treeRowLabel(row) {
+    return normalizedText(
+      row?.querySelector?.(".x-page-search-tree-item__name")?.textContent
+    );
+  }
+
+  function treeAncestorRows(row, rows) {
+    const parents = [];
+    let parent = row?.parentElement?.closest?.(".x-page-search-tree-item");
+    while (parent) {
+      parents.push(parent);
+      parent = parent.parentElement?.closest?.(".x-page-search-tree-item");
+    }
+    if (parents.length) return parents;
+
+    // Accessible flat trees encode ancestry with levels rather than nesting.
+    const rowLevel = (element) => Number(
+      element?.getAttribute?.("aria-level") || element?.getAttribute?.("data-level")
+    );
+    let level = rowLevel(row);
+    if (level > 0) {
+      for (let index = rows.indexOf(row) - 1; index >= 0 && level > 1; index -= 1) {
+        const candidateLevel = rowLevel(rows[index]);
+        if (candidateLevel > 0 && candidateLevel < level) {
+          parents.push(rows[index]);
+          level = candidateLevel;
+        }
+      }
+      return parents;
+    }
+
+    // Some online.cgi trees are flat and express hierarchy only by indentation.
+    // Compare visible name positions, so collapsed rows cannot become ancestors.
+    const left = (element) => {
+      const name = element?.querySelector?.(".x-page-search-tree-item__name");
+      return name?.getClientRects?.().length ? name.getBoundingClientRect().left : null;
+    };
+    let indent = left(row);
+    for (let index = rows.indexOf(row) - 1; index >= 0 && indent !== null; index -= 1) {
+      const candidate = left(rows[index]);
+      if (candidate !== null && candidate < indent - 3) {
+        parents.push(rows[index]);
+        indent = candidate;
+      }
+    }
+    return parents;
+  }
+
+  function treeAncestorLabels(row, rows) {
+    return treeAncestorRows(row, rows).map(treeRowLabel);
+  }
+
   function stripQuotedQuery(value) {
     const normalized = normalizedText(value);
     return normalized.replace(/^["«“](.*)["»”]$/, "$1").trim();
@@ -219,7 +286,9 @@
 
     getCapabilities(page = this.detectPage()) {
       const search = !["auth-required", "unsupported"].includes(page);
-      const documentReady = page === "document" && Boolean(this._docRoot());
+      // Native Word/PDF controls can be ready before the inner text frame.
+      // Text extraction has its own full-body/stability gate below.
+      const documentReady = page === "document" && Boolean(this._docShell());
       const resultsReady =
         (page === "list" || page === "search") &&
         (this.collectListItems().length > 0 || this._hasEmptyResultsMessage());
@@ -233,7 +302,7 @@
         documentReady,
         wordSaveReady: documentReady && Boolean(document.querySelector("button.word")),
         menuSaveReady: documentReady && Boolean(document.querySelector("button.dots")),
-        exportFormats: ["docx", "pdf", "txt", "md", "html"],
+        exportFormats: ["docx", "pdf", "txt", "md", "html", "docx-one", "md-one"],
         nativeSave: documentReady,
       };
     },
@@ -306,6 +375,7 @@
     collectListItems(root = document) {
       const items = [];
       const seen = new Set();
+      const category = this.currentResultCategory();
       const links = root.querySelectorAll(
         [
           "a.x-page-components-search-result-item__extra-title",
@@ -333,8 +403,8 @@
           index: items.length + 1,
           title,
           url: href,
-          instance: this.currentResultCategory().key,
-          instanceLabel: this.currentResultCategory().label,
+          instance: category.key,
+          instanceLabel: category.label,
         });
       });
 
@@ -352,10 +422,14 @@
         let stableSince = 0;
         let ready = false;
         while (Date.now() < deadline) {
+          options.ensureUnchanged?.();
           const current = this.fullResultsState(this.currentSearchQuery());
           if (current.resultsReady && !current.loading) {
             const key = [
               current.activeCategory || current.activeCategoryLabel,
+              current.categorySelected,
+              current.judicialCategory,
+              this.getCollectionIdentity()?.contextSignature,
               current.categoryTotal ?? "",
               current.resultSignature,
               current.resultsRevision,
@@ -390,7 +464,9 @@
       const expectedCategory = normalizedText(
         options.category || initialCategory.key || initialCategory.label
       );
+      const initialContext = this.getCollectionIdentity()?.contextSignature;
       const ensureUnchanged = () => {
+        options.ensureUnchanged?.();
         if (!this.isFullResultsPage()) return;
         const currentCategory = this.currentResultCategory();
         const currentCategoryValue = normalizedText(
@@ -398,7 +474,8 @@
         );
         if (
           (expectedQuery && this.currentSearchQuery() !== expectedQuery) ||
-          (expectedCategory && currentCategoryValue !== expectedCategory)
+          (expectedCategory && currentCategoryValue !== expectedCategory) ||
+          (initialContext && this.getCollectionIdentity()?.contextSignature !== initialContext)
         ) {
           throw adapterError(
             "COLLECTION_STATE_CHANGED",
@@ -549,8 +626,10 @@
 
     isFullResultsPage() {
       return (
-        /[?&]req=query\b/i.test(location.search) &&
-        Boolean(document.querySelector(".x-page-search-tree-item"))
+        /[?&](?:req=query|page=list)\b/i.test(location.search) &&
+        Boolean(document.querySelector(
+          ".x-page-search-tree-item, .x-page-search-results-header__name, .x-page-search-results__list"
+        ))
       );
     },
 
@@ -564,9 +643,60 @@
 
     currentResultCategory() {
       const heading = document.querySelector(".x-page-search-results-header__name");
-      const label = normalizedText(heading?.innerText || heading?.textContent);
-      return { key: categoryKeyForLabel(label), label };
+      const headingLabel = normalizedText(heading?.innerText || heading?.textContent);
+      const rows = [...document.querySelectorAll(".x-page-search-tree-item")];
+      const activeRows = rows.filter(isPresetActive);
+      const activeRow = activeRows.find((row) => treeRowLabel(row) === headingLabel) ||
+        activeRows.at(-1);
+      const activeLabel = treeRowLabel(activeRow);
+      const label = headingLabel || activeLabel;
+      const key = categoryKeyForLabel(label);
+      const selected = Boolean(
+        label &&
+        !/^Судебная практика$/iu.test(label) &&
+        !activeRow?.classList?.contains("x-page-search-tree-item--no-select") &&
+        (!headingLabel || !activeLabel || headingLabel === activeLabel)
+      );
+      const ancestors = treeAncestorLabels(activeRow, rows);
+      const breadcrumbs = document.querySelector(
+        ".x-page-search-breadcrumbs__balloon-content, .x-page-search-breadcrumbs"
+      );
+      const breadcrumbLabels = [breadcrumbs, ...(breadcrumbs?.querySelectorAll("*") || [])]
+        .map((element) => normalizedText(element?.innerText || element?.textContent));
+      const judicialBreadcrumb = breadcrumbLabels.some((value) =>
+        /(?:^|[\s>›»/])Судебная практика(?:$|[\s>›»/])/iu.test(value)
+      );
+      // Prefer the actual selected branch's ancestry. An unrelated judicial
+      // branch elsewhere in the sidebar must not qualify a legislative list.
+      const judicial = ancestors.length
+        ? ancestors.some((value) => /^Судебная практика$/iu.test(value))
+        : judicialBreadcrumb || Boolean(key);
+      return { key, label, selected, judicial, path: activeRow ? [...ancestors].reverse().concat(label) : null };
     },
+
+    treeRowInfo(row) {
+      const rows = [...document.querySelectorAll(".x-page-search-tree-item")];
+      if (!rows.includes(row)) return null;
+      const label = treeRowLabel(row);
+      const ancestors = treeAncestorLabels(row, rows);
+      const current = !ancestors.length && isPresetActive(row) ? this.currentResultCategory() : null;
+      const judicial = /^Судебная практика$/iu.test(label) || (ancestors.length
+        ? ancestors.some((value) => /^Судебная практика$/iu.test(value))
+        : Boolean(categoryKeyForLabel(label)) ||
+          (current?.judicial && current.label === label));
+      const count = normalizedText(row.querySelector(
+        ".x-page-search-tree-item-count, .x-page-search-tree-item__count"
+      )?.textContent).replace(/\s/gu, "");
+      return {
+        label,
+        path: [...ancestors].reverse().concat(label),
+        judicial: Boolean(label && judicial),
+        selectable: !row.classList.contains("x-page-search-tree-item--no-select"),
+        total: /^\d+$/u.test(count) ? Number(count) : null,
+      };
+    },
+
+    documentIdentity,
 
     getCollectionIdentity() {
       if (!this.isFullResultsPage()) return null;
@@ -588,7 +718,11 @@
             location.href,
             pageTitle,
             breadcrumbs,
-            state.activeCategory || state.activeCategoryLabel || "",
+            state.activeCategory || "",
+            state.activeCategoryLabel || "",
+            JSON.stringify(state.categoryPath),
+            state.categorySelected,
+            state.judicialCategory,
             total ?? "",
           ].join("\n")
         ),
@@ -615,7 +749,10 @@
         queryAuthoritative: Boolean(query) && pageQuery === query,
         activeCategory: category.key,
         activeCategoryLabel: category.label,
-        categoryMatches: !expectedCategory || category.key === expectedCategory,
+        categoryPath: category.path,
+        categorySelected: category.selected,
+        judicialCategory: category.judicial,
+        categoryMatches: !expectedCategory || (category.key || category.label) === expectedCategory,
         loading,
         emptyResults,
         resultsReady: !loading && (items.length > 0 || emptyResults),
@@ -762,7 +899,7 @@
         const state = this.fullResultsState(expectedQuery);
         return {
           ...state,
-          activeScope: state.activeCategory ? "practice" : "all",
+          activeScope: state.judicialCategory ? "practice" : "all",
         };
       }
       const items = this.collectListItems();
@@ -914,13 +1051,111 @@
       return this._docTitle();
     },
 
-    _docRoot() {
+    _docShell() {
       return (
+        document.querySelector(".document.content") ||
         document.querySelector(".pageContainer.x-page-document-content") ||
         document.querySelector(".x-page-document-content") ||
         document.querySelector(".pageContainer") ||
         document.querySelector("[class*='document-content']")
       );
+    },
+
+    _documentTextSource() {
+      // Production uses a same-origin document_inner.htm frame. The adjacent
+      // pageContainer holds reference/AI-summary panels, NOT the act itself.
+      const frames = [...document.querySelectorAll("iframe")].filter((frame) => {
+        try {
+          const url = new URL(frame.getAttribute("src") || "", location.href);
+          return /\/document_inner\.html?$/i.test(url.pathname);
+        } catch { return false; }
+      });
+      if (frames.length) {
+        if (frames.length !== 1) return null;
+        const sources = [];
+        for (const frame of frames) {
+          try {
+            const url = new URL(frame.getAttribute("src"), location.href);
+            if (url.origin !== location.origin) continue;
+            const doc = frame.contentDocument;
+            const root = doc?.querySelector(".document.content");
+            if (doc?.readyState === "complete" && root) sources.push({ root, framed: true });
+          } catch { /* Never fall back to a summary when a frame is inaccessible. */ }
+        }
+        return sources.length === 1 ? sources[0] : null;
+      }
+      const body = document.querySelector(".document.content");
+      if (body) return { root: body, framed: false };
+      // Support the older inline layout, but never treat a tabbed application
+      // shell as a document, even while its text frame is still being created.
+      const roots = [...document.querySelectorAll(
+        ".pageContainer.x-page-document-content, .x-page-document-content, .pageContainer"
+      )].filter((root) => !root.matches(".textContainer, .page") &&
+        !root.querySelector(".page, iframe, .documentLoader"));
+      return roots.length === 1 ? { root: roots[0], framed: false } : null;
+    },
+
+    _docRoot() {
+      return this._documentTextSource()?.root || null;
+    },
+
+    _documentTextSnapshot() {
+      const source = this._documentTextSource();
+      if (!source) return null;
+      const { root, framed } = source;
+      const doc = root.ownerDocument;
+      const visible = (node) => {
+        const style = doc.defaultView.getComputedStyle(node);
+        return !node.hidden && node.getAttribute("aria-hidden") !== "true" &&
+          style.display !== "none" && !["hidden", "collapse"].includes(style.visibility);
+      };
+      if ([...doc.querySelectorAll(".documentLoader, .connectionLost, [aria-busy='true']")]
+        .some((node) => visible(node) && (node.matches(".documentLoader, [aria-busy='true']") || node.textContent.trim()))) {
+        return null;
+      }
+      const zones = [...root.querySelectorAll(".zone")];
+      if (zones.some((zone) => zone.getAttribute("rendered") !== "1")) return null;
+      // A virtualized frame may contain only one viewport's paragraphs. Refuse
+      // it unless the site's full/flat layout and contiguous paragraphs agree.
+      if (framed || zones.length) {
+        if (!root.classList.contains("flat") || !zones.length) return null;
+        const numbers = [...root.querySelectorAll("[parnum]")].map((p) => Number(p.getAttribute("parnum")));
+        const unique = [...new Set(numbers)].sort((a, b) => a - b);
+        if (!unique.length || unique.some((number, index) => !Number.isInteger(number) || number !== index)) return null;
+      }
+      const clone = root.cloneNode(true);
+      // Evaluate visibility in the live frame before cloning loses CSS/layout.
+      const originals = [...root.querySelectorAll("*")];
+      const copies = [...clone.querySelectorAll("*")];
+      originals.forEach((node, index) => { if (!visible(node)) copies[index].remove(); });
+      const cleanupStats = consCleanConsultantDocument(clone, { removeSelectors: DOCUMENT_UI_SELECTORS });
+      const text = consSerializeConsultantText(clone).replace(/\n{3,}/g, "\n\n").trim();
+      if (!text || /^(?:Загрузка(?:\s|…|\.)|Подождите)/iu.test(text)) return null;
+      if (!root.matches(".document.content") &&
+        /^(?:Справка к документу|Краткий пересказ|Подготовлено с использованием искусственного интеллекта)\s*$/imu.test(text)) return null;
+      return { root, clone, text, cleanupStats };
+    },
+
+    async _waitForDocumentText() {
+      if (!this._docShell()) {
+        throw adapterError("DOCUMENT_NOT_READY",
+          "Область документа не найдена; дождитесь загрузки документа и повторите экспорт");
+      }
+      const deadline = Date.now() + DOCUMENT_TEXT_TIMEOUT_MS;
+      let previous = null;
+      let stableSince = 0;
+      while (Date.now() < deadline) {
+        const snapshot = this._documentTextSnapshot();
+        if (snapshot && previous?.root === snapshot.root && previous.text === snapshot.text) {
+          if (Date.now() - stableSince >= DOCUMENT_TEXT_STABLE_MS) return snapshot;
+        } else {
+          previous = snapshot;
+          stableSince = Date.now();
+        }
+        await sleep(200);
+      }
+      throw adapterError("DOCUMENT_TEXT_INCOMPLETE",
+        "Полный текст документа не загружен или не удалось подтвердить его полноту. Выгрузка остановлена; справка и краткий пересказ не сохранены. Откройте полный текст акта и повторите выгрузку.");
     },
 
     async _openSaveFormatMenu() {
@@ -1028,28 +1263,7 @@
         };
       }
 
-      // Fast path: pull text/HTML from the document pane
-      const root = this._docRoot();
-      if (!root) {
-        throw adapterError(
-          "DOCUMENT_NOT_READY",
-          "Область документа не найдена; дождитесь загрузки документа и повторите экспорт"
-        );
-      }
-
-      const clone = root.cloneNode(true);
-      const cleanupStats = consCleanConsultantDocument(clone, {
-        removeSelectors: [
-          "script, style, template, iframe, noscript",
-          "button, form, input, textarea, select, progress",
-          "[role='button'], [role='menu'], [role='dialog'], [role='navigation']",
-          ".contextToolbar, .contextPanel, .x-menu",
-        ],
-      });
-
-      const text = consSerializeConsultantText(clone)
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+      const { clone, text, cleanupStats } = await this._waitForDocumentText();
       const html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(
         title
       )}</title><link rel="canonical" href="${escapeHtml(

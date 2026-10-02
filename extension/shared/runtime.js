@@ -50,7 +50,9 @@
     "docTextLen",
   ]);
 
-  const CONS_FORMATS = Object.freeze(["docx", "pdf", "txt", "md", "html"]);
+  const CONS_FORMATS = Object.freeze(["docx", "pdf", "txt", "md", "html", "docx-one", "md-one"]);
+  // Supported commands for automatic instance selection. A manually opened
+  // judicial collection may have a different label and no internal key.
   const CONS_JUDICIAL_INSTANCES = Object.freeze([
     "higher-courts",
     "arbitration-circuit",
@@ -73,7 +75,7 @@
     "public-site": Object.freeze({
       search: true,
       scopes: Object.freeze(["all"]),
-      exportFormats: Object.freeze(["txt", "md", "html"]),
+      exportFormats: Object.freeze(["txt", "md", "html", "docx-one", "md-one"]),
       nativeFormats: Object.freeze([]),
     }),
   });
@@ -211,6 +213,16 @@
       throw new Error(`Формат ${normalized.toUpperCase()} недоступен для ${adapterId}`);
     }
     return normalized;
+  }
+
+  function consIsMergedFormat(format) {
+    return ["docx-one", "md-one"].includes(String(format || "").toLowerCase());
+  }
+
+  function consExportFormatLabel(format) {
+    if (format === "docx-one") return "DOCX (единый)";
+    if (format === "md-one") return "Markdown (единый)";
+    return String(format || "").toUpperCase();
   }
 
   function consBuildTextExportBody(doc, format = "txt") {
@@ -498,6 +510,8 @@
     CONS_JUDICIAL_INSTANCES,
     CONS_JUDICIAL_INSTANCE_LABELS,
     consAssertFormatSupported,
+    consIsMergedFormat,
+    consExportFormatLabel,
     consBuildTextExportBody,
     consBuildOnlineSearchUrl,
     consBuildPublicSearchUrl,

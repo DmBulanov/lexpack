@@ -181,14 +181,15 @@ test("planned TXT export survives an MV3 worker restart and writes report v2 plu
   await workerRestarted;
   await cdp.detach();
 
-  await planner.waitForFunction(
-    async () => {
+  await planner.evaluate(async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
       const response = await chrome.runtime.sendMessage({ type: "GET_PROGRESS" });
-      return response?.ok && !response.running && response.progress?.status === "done";
-    },
-    undefined,
-    { timeout: 30000 }
-  );
+      if (response?.ok && !response.running && response.progress?.status === "done") return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("Export did not complete after the worker restart");
+  });
 
   const completed = await planner.evaluate(async (jobId) => {
     const deadline = Date.now() + 10000;
@@ -245,7 +246,7 @@ test("planned TXT export survives an MV3 worker restart and writes report v2 plu
 
   const report = JSON.parse(await fs.readFile(reportDownload.filename, "utf8"));
   assert.equal(report.schemaVersion, 2);
-  assert.equal(report.extensionVersion, "0.9.5-chrome");
+  assert.equal(report.extensionVersion, "0.9.9-chrome");
   assert.equal(report.variant, "chrome");
   assert.equal(report.jobId, beforeRestart.jobId);
   assert.equal(report.query, null);

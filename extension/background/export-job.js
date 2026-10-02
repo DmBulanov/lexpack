@@ -79,6 +79,8 @@
       id: String(input.id || `job-${now}`),
       adapter: input.adapter,
       format: input.format,
+      mergedFile: cloneValue(input.mergedFile, null),
+      mergedResult: null,
       query: String(input.query || "").slice(0, 2000),
       scope: String(input.scope || "all"),
       folder: String(input.reportRelativeFolder || input.folder || CONS_DEFAULT_DOWNLOAD_FOLDER),
@@ -222,6 +224,19 @@
     return job;
   }
 
+  function consMarkItemPrepared(job, itemIndex, details = {}, now = Date.now()) {
+    const item = job.items[itemIndex];
+    if (!item) throw new Error(`Нет элемента ${itemIndex}`);
+    // Reading is progress, but it is not a confirmed download yet.
+    item.status = "prepared";
+    item.contentCleanup = cloneValue(details.contentCleanup, null);
+    job.nextIndex = itemIndex + 1;
+    job.phase = "collecting_merged";
+    job.current = null;
+    job.updatedAt = new Date(now).toISOString();
+    return job;
+  }
+
   function consFinishJob(job, status, now = Date.now()) {
     if (!["done", "stopped", "failed"].includes(status)) {
       throw new Error(`Некорректный итоговый статус: ${status}`);
@@ -267,9 +282,10 @@
     const unconfirmed = job.items.filter((item) => item.status === "unconfirmed").length;
     const failed = job.items.filter((item) => item.status === "failed").length;
     const stopped = job.items.filter((item) => item.status === "stopped").length;
+    const prepared = job.items.filter((item) => item.status === "prepared").length;
     return {
       jobId: job.id,
-      current: completed + unconfirmed + failed + stopped,
+      current: completed + unconfirmed + failed + stopped + prepared,
       total: job.items.length,
       completed,
       unconfirmed,
@@ -292,6 +308,7 @@
     consIsJobActive,
     consJobProgress,
     consMarkItemFinished,
+    consMarkItemPrepared,
     consMarkItemStarted,
     consSafeDownloadDiagnostics,
   };

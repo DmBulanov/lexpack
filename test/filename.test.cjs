@@ -4,6 +4,7 @@ const test = require("node:test");
 const {
   consSafeDownloadFilename,
   consSafeFilename,
+  consSafeExtension,
   consUtf8Length,
 } = require("../extension/shared/filename.js");
 
@@ -30,4 +31,11 @@ test("download-boundary filenames cannot smuggle paths or reserved device names"
   assert.equal(consSafeDownloadFilename("folder\\акт.docx"), "акт.docx");
   assert.equal(consSafeDownloadFilename("NUL", "json"), "_NUL.json");
   assert.ok(consUtf8Length(consSafeDownloadFilename(`${"界".repeat(300)}.pdf`)) <= 240);
+});
+
+test("merged format identifiers always produce real DOCX and MD extensions", () => {
+  for (const [format, extension] of [["docx-one", "docx"], ["md-one", "md"]]) {
+    assert.equal(consSafeExtension(format), extension);
+    assert.equal(consSafeFilename("Подборка.pdf", undefined, format), `Подборка.${extension}`);
+  }
 });

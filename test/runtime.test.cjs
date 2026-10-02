@@ -14,6 +14,10 @@ const {
   consNativeDownloadDecision,
   consNormalizeDocumentUrl,
   consNormalizeJudicialInstances,
+  consIsMergedFormat,
+  consExportFormatLabel,
+  consGetAdapterCapabilities,
+  CONS_JUDICIAL_INSTANCES,
   consMigrateStoredDownloadFolder,
   consProvenanceUrl,
   consRedactUrl,
@@ -21,7 +25,13 @@ const {
   consSafeRelativeDownloadPath,
 } = require("../extension/shared/runtime.js");
 
-test("judicial instance selection is a closed, deduplicated allowlist", () => {
+test("automatic judicial instance selection keeps its four-command allowlist", () => {
+  assert.deepEqual(CONS_JUDICIAL_INSTANCES, [
+    "higher-courts",
+    "arbitration-circuit",
+    "arbitration-first",
+    "arbitration-rulings",
+  ]);
   assert.deepEqual(
     consNormalizeJudicialInstances([
       "arbitration-first",
@@ -167,6 +177,21 @@ test("format capabilities reject silent public-site fallback", () => {
     () => consAssertFormatSupported("online-app", "rtf"),
     /Неизвестный формат: rtf/
   );
+});
+
+test("merged formats are available without changing native DOCX/PDF support", () => {
+  for (const adapter of ["online-app", "public-site"]) {
+    for (const format of ["docx-one", "md-one"]) {
+      assert.equal(consAssertFormatSupported(adapter, format), format);
+      assert.equal(consIsMergedFormat(format), true);
+      assert.equal(consGetAdapterCapabilities(adapter).nativeFormats.includes(format), false);
+    }
+  }
+  assert.deepEqual(consGetAdapterCapabilities("online-app").nativeFormats, ["docx", "pdf"]);
+  assert.equal(consIsMergedFormat("docx"), false);
+  assert.equal(consIsMergedFormat("md"), false);
+  assert.equal(consExportFormatLabel("docx-one"), "DOCX (единый)");
+  assert.equal(consExportFormatLabel("md-one"), "Markdown (единый)");
 });
 
 test("Markdown download body is unchanged UTF-8 text with the exact MIME type", () => {

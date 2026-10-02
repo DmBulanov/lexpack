@@ -47,6 +47,8 @@
               <option value="pdf">PDF</option>
               <option value="txt">TXT</option>
               <option value="md">Markdown</option>
+              <option value="docx-one">DOCX (единый)</option>
+              <option value="md-one">Markdown (единый)</option>
               <option value="html">HTML</option>
             </select>
           </label>
@@ -65,6 +67,7 @@
           <code>{case}</code>, <code>{documentType}</code>, <code>{format}</code>.
           Расширение файла добавляется автоматически.
         </p>
+        <p id="mergedFormatHint" class="muted" hidden>Форматы «единый» объединяют выбранные материалы в один файл по порядку списка. DOCX создаётся из очищенного текста: исходная вёрстка, изображения и оформление таблиц не переносятся.</p>
         <div class="row-actions">
           <button id="saveProfile" class="primary" type="button">Сохранить профиль</button>
           <span id="profileStateText" class="muted" aria-live="polite"></span>

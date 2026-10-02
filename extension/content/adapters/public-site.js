@@ -8,7 +8,7 @@
     searchScopes: Object.freeze(["all"]),
     collectList: true,
     extractDocument: true,
-    exportFormats: Object.freeze(["txt", "md", "html"]),
+    exportFormats: Object.freeze(["txt", "md", "html", "docx-one", "md-one"]),
     nativeSave: false,
   });
 

@@ -26,6 +26,7 @@ const els = {
   btnFind: document.getElementById("btnFind"),
   contextActions: document.getElementById("contextActions"),
   btnExport: document.getElementById("btnExport"),
+  btnDownloadNow: document.getElementById("btnDownloadNow"),
   btnOne: document.getElementById("btnOne"),
   btnStop: document.getElementById("btnStop"),
   btnProbe: document.getElementById("btnProbe"),
@@ -192,6 +193,9 @@ function updatePlannerButton() {
   els.btnExport.textContent = available
     ? `Настроить выгрузку · ${available}`
     : "Настроить выгрузку";
+  els.btnDownloadNow.textContent = available
+    ? `Скачать сразу · ${available}`
+    : "Скачать сразу";
 }
 
 function collectionSummary(meta = {}) {
@@ -224,7 +228,8 @@ function invalidateCollection() {
 function isOnlineFullResultsUrl(rawUrl = currentTabUrl) {
   try {
     const url = new URL(rawUrl);
-    return currentAdapter === "online-app" && url.searchParams.get("req") === "query";
+    return currentAdapter === "online-app" &&
+      (url.searchParams.get("req") === "query" || url.searchParams.get("page") === "list");
   } catch {
     return false;
   }
@@ -232,7 +237,7 @@ function isOnlineFullResultsUrl(rawUrl = currentTabUrl) {
 
 function manualCategoryIsSupported(category) {
   if (!isOnlineFullResultsUrl()) return true;
-  return CONS_JUDICIAL_INSTANCES.includes(String(category?.key || ""));
+  return category?.selected === true && category?.judicial === true;
 }
 
 function setCollectionNotice(status, message, meta = {}) {
@@ -284,6 +289,7 @@ function updateActionState() {
     : collectionMessage;
   els.resultActions.hidden = collectionStatus === "idle";
   els.btnExport.hidden = !hasDownloadableCollection && !retryableCollection;
+  els.btnDownloadNow.hidden = !hasDownloadableCollection;
   if (retryableCollection) els.btnExport.textContent = "Повторить чтение";
   else updatePlannerButton();
   els.btnOne.hidden = !documentPage;
@@ -293,6 +299,9 @@ function updateActionState() {
     (!retryableCollection && !hasDownloadableCollection);
   els.btnOne.disabled =
     exportRunning || actionPending || currentPage !== "document" || !formatSupported;
+  els.btnDownloadNow.disabled = exportRunning || actionPending ||
+    !hasDownloadableCollection || !formatSupported || collectionMeta.incomplete === true ||
+    (collectionMeta.totalKnown && cachedItems.length < Math.min(200, collectionMeta.total));
   const instancesReady =
     currentAdapter !== "online-app" || selectedInstances().length > 0;
   els.btnFind.disabled =
@@ -394,6 +403,8 @@ function applyItems(items, meta = {}) {
     total: Number.isInteger(meta.total) ? meta.total : cachedItems.length,
     totalKnown: meta.totalKnown === true,
     truncated: meta.truncated === true,
+    incomplete: meta.incomplete === true,
+    createdAt: meta.createdAt || null,
   };
   if (meta.adapter || meta.page || meta.capabilities) {
     applyCapabilities(
@@ -512,7 +523,7 @@ async function init() {
 function unsupportedManualCategoryMessage(category) {
   const label = String(category?.label || "").trim();
   const prefix = label ? `Сейчас открыт раздел «${label}». ` : "";
-  return `${prefix}Выберите слева уровень судебной инстанции, который нужно скачать.`;
+  return `${prefix}Выберите слева суд или судебную категорию, затем используйте кнопки в окне LexPack.`;
 }
 
 async function prepareOpenCollection(ping) {
@@ -528,7 +539,7 @@ async function prepareOpenCollection(ping) {
         label: ping.category?.label || "",
       }
     );
-    els.progressText.textContent = "выберите уровень судебной инстанции";
+    els.progressText.textContent = "выберите суд или строку судебной практики";
     return false;
   }
   const restored = await restoreCollection(ping);
@@ -569,7 +580,7 @@ async function scanList(initialPing = null) {
         label: ping.category?.label || "",
       }
     );
-    els.progressText.textContent = "выберите уровень судебной инстанции";
+    els.progressText.textContent = "выберите суд или строку судебной практики";
     return false;
   }
   const response = await tabMessage({
@@ -577,7 +588,7 @@ async function scanList(initialPing = null) {
     allResults: true,
     maxItems: 200,
     query: ping.query || "",
-    category: ping.category?.key || "",
+    category: ping.category?.key || ping.category?.label || "",
   });
   if (!response?.ok) {
     setCollectionNotice(
@@ -602,7 +613,7 @@ async function scanList(initialPing = null) {
         label: response.category?.label || "",
       }
     );
-    els.progressText.textContent = "выберите уровень судебной инстанции";
+    els.progressText.textContent = "выберите суд или строку судебной практики";
     return false;
   }
   applyItems(response.items, {
@@ -619,8 +630,9 @@ async function scanList(initialPing = null) {
     totalKnown: response.categoryTotalKnown === true,
     truncated: response.truncated === true,
     emptyMessage: "В открытой категории нет документов",
+    incomplete: response.incomplete === true,
   });
-  await sendMessage({
+  const cached = await sendMessage({
     type: "CACHE_SEARCH_COLLECTION",
     tabId: currentTabId,
     source: "current-list",
@@ -635,7 +647,16 @@ async function scanList(initialPing = null) {
     totalKnown: response.categoryTotalKnown === true,
     truncated: response.truncated === true,
     collectionIdentity: response.collectionIdentity,
+    incomplete: response.incomplete === true,
+    label: response.category?.label || "",
   });
+  if (!cached?.ok) {
+    setCollectionNotice("error", cached?.error || "Не удалось сохранить открытую подборку", {
+      source: "current-list",
+    });
+    return false;
+  }
+  collectionMeta.createdAt = cached.cache.createdAt;
   if (response.category?.label) {
     if (response.categoryTotalKnown) {
       const suffix = response.truncatedByLimit
@@ -677,6 +698,8 @@ async function restoreCollection(ping) {
     total: cache.total,
     totalKnown: cache.totalKnown,
     truncated: cache.truncated,
+    incomplete: cache.incomplete,
+    createdAt: cache.createdAt,
     emptyMessage: "Документы не найдены",
   });
   els.progressText.textContent = cache.items?.length
@@ -724,6 +747,7 @@ async function runFind() {
       totalKnown: response.truncated !== true,
       truncated: response.truncated === true,
       emptyMessage: "По запросу список пуст. Уточните формулировку или область поиска.",
+      createdAt: response.collection?.createdAt,
     });
     if (response.count) {
       els.searchPanel.open = false;
@@ -805,6 +829,35 @@ async function openPlanner() {
   }
 }
 
+async function downloadCollectionNow() {
+  if (actionPending || exportRunning || !collectionReady || !cachedItems.length) return;
+  actionPending = true;
+  updateActionState();
+  try {
+    await storeSettings();
+    const response = await sendMessage({
+      type: "START_COLLECTION_EXPORT",
+      collectionCreatedAt: collectionMeta.createdAt,
+      format: els.format.value,
+      folder: els.downloadFolder.value,
+    });
+    if (!response?.ok) {
+      els.progressText.textContent = "не удалось начать выгрузку";
+      setLog(response?.error || "Не удалось скачать подборку");
+      return;
+    }
+    exportRunning = true;
+    setProgressInfo();
+    els.progressText.textContent = `скачиваем подборку: ${response.total}`;
+    pollWhileRunning();
+  } catch (error) {
+    setLog(String(error?.message || error));
+  } finally {
+    actionPending = false;
+    updateActionState();
+  }
+}
+
 async function handleCollectionButton() {
   if (collectionStatus !== "error") {
     await openPlanner();
@@ -827,6 +880,7 @@ function invalidateSearchCollection() {
 
 els.btnFind.addEventListener("click", () => runFind());
 els.btnExport.addEventListener("click", () => handleCollectionButton());
+els.btnDownloadNow.addEventListener("click", () => downloadCollectionNow());
 els.btnOne.addEventListener("click", () => exportCurrentDocument());
 
 els.query.addEventListener("keydown", (event) => {

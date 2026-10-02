@@ -540,7 +540,7 @@ test("a non-judicial full-results category is explained instead of exported", as
   assert.equal(await popup.locator("#resultTitle").innerText(), "Открытая подборка");
   assert.match(
     await popup.locator("#foundSummary").innerText(),
-    /Российское законодательство[\s\S]*Выберите слева уровень судебной инстанции/
+    /Российское законодательство[\s\S]*Выберите слева суд или судебную категорию/
   );
   assert.equal(await popup.locator("#btnExport").isVisible(), false);
   assert.doesNotMatch(await popup.locator("#log").innerText(), /НЕ СУДЕБНЫЙ/);

@@ -16,6 +16,10 @@
     typeof module !== "undefined" && module.exports
       ? require("./filename.js")
       : globalThis;
+  const runtimeApi =
+    typeof module !== "undefined" && module.exports
+      ? require("./runtime.js")
+      : globalThis;
 
   const CONS_EXPORT_PLAN_SCHEMA_VERSION = 1;
   const MAX_EXPORT_ITEMS = 200;
@@ -34,6 +38,7 @@
     return {
       source: collection.source === "search" ? "search" : "current-list",
       scope: String(collection.scope || "current-list").slice(0, 200),
+      ...(collection.label ? { label: normalizedTitle(collection.label, "Подборка") } : {}),
       total: Number.isInteger(total) && total >= sourceCount ? total : sourceCount,
       totalKnown: collection.totalKnown === true,
       truncated: collection.truncated === true,
@@ -79,7 +84,9 @@
     let common = String(items[0].plannedRelativeFolder || "").split("/").filter(Boolean);
     for (const item of items.slice(1)) {
       const segments = String(item.plannedRelativeFolder || "").split("/").filter(Boolean);
-      common = common.filter((segment, index) => segments[index] === segment);
+      let length = 0;
+      while (length < common.length && segments[length] === common[length]) length += 1;
+      common = common.slice(0, length);
       if (!common.length) break;
     }
     return common.join("/") || "LexPack";
@@ -120,6 +127,7 @@
 
     const rawSource = Array.isArray(input.items) ? input.items : [];
     const source = rawSource.slice(0, MAX_EXPORT_ITEMS);
+    const collection = normalizedCollection(input.collection, source.length);
     const selected = selectionSet(input.selectedSourceIndexes);
     const selectedItems = source
       .map((item, offset) => ({
@@ -140,8 +148,9 @@
     }
 
     const query = String(input.query || "").replace(/\s+/gu, " ").trim().slice(0, 2000);
+    const merged = runtimeApi.consIsMergedFormat(profile.format);
     const referencedTokens = new Set([
-      ...filenameValidation.tokens,
+      ...(merged ? [] : filenameValidation.tokens),
       ...folderValidation.tokens,
     ]);
     const planned = [];
@@ -174,7 +183,7 @@
         }
         const warnings = [
           ...folder.warnings,
-          ...filename.warnings,
+          ...(merged ? [] : filename.warnings),
           ...metadataWarnings(metadata, referencedTokens),
         ];
         const plannedRelativePath = `${folder.folder}/${filename.filename}`;
@@ -207,7 +216,42 @@
       });
     }
 
-    const collided = templateApi.consResolvePathCollisions(planned).map((item) => {
+    let mergedFile = null;
+    if (merged && planned.length) {
+      const labels = new Set(planned.map((item) => item.instanceLabel || ""));
+      const instance = labels.size === 1 ? planned[0].instanceLabel || "" : "";
+      const title = query || collection.label || instance || (planned.length === 1 ? planned[0].originalTitle : "Подборка");
+      const filename = templateApi.consRenderFilenameTemplate(
+        profile.filenameTemplate,
+        { index: 1, total: planned.length, title, query, instance },
+        profile.format
+      );
+      if (!filename.ok) errors.push(...filename.errors);
+      else {
+        const folder = commonFolder(planned);
+        mergedFile = {
+          title,
+          plannedFilename: filename.filename,
+          plannedRelativeFolder: folder,
+          plannedRelativePath: `${folder}/${filename.filename}`,
+        };
+        for (const item of planned) {
+          Object.assign(item, {
+            plannedFilename: mergedFile.plannedFilename,
+            plannedRelativeFolder: mergedFile.plannedRelativeFolder,
+            plannedRelativePath: mergedFile.plannedRelativePath,
+            expectedFilename: filename.filename,
+          });
+          item.cleanupRulesApplied.filename = filename.cleanupRulesApplied;
+          item.warnings = item.warnings.filter((warning) => warning.code !== "LONG_RELATIVE_PATH");
+          item.warnings.push(...filename.warnings);
+          if (filenameApi.consUtf8Length(mergedFile.plannedRelativePath) > 240) {
+            item.warnings.push({ code: "LONG_RELATIVE_PATH", message: "Итоговый относительный путь длиннее 240 байт" });
+          }
+        }
+      }
+    }
+    const collided = (merged ? planned : templateApi.consResolvePathCollisions(planned)).map((item) => {
       if (!item.collisionResolution.internal) return item;
       return {
         ...item,
@@ -223,7 +267,6 @@
     const warnings = collided.flatMap((item) =>
       item.warnings.map((warning) => ({ ...warning, exportIndex: item.exportIndex }))
     );
-    const collection = normalizedCollection(input.collection, source.length);
     return {
       schemaVersion: CONS_EXPORT_PLAN_SCHEMA_VERSION,
       ok: errors.length === 0,
@@ -232,6 +275,7 @@
       adapter: String(input.adapter || "online-app"),
       query,
       format: profile.format,
+      mergedFile,
       profileSnapshot: structuredClone(profile),
       collection,
       sourceCount: source.length,

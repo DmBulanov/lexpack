@@ -10,6 +10,7 @@ const {
   consIsJobActive,
   consJobProgress,
   consMarkItemFinished,
+  consMarkItemPrepared,
   consMarkItemStarted,
   consSafeDownloadDiagnostics,
 } = require("../extension/background/export-job.js");
@@ -213,4 +214,34 @@ test("reports are enabled by default and can be disabled for a single-document j
     }).reportEnabled,
     false
   );
+});
+
+test("reading merged sources is progress but not a completed download", () => {
+  const job = createJob();
+  job.format = "md-one";
+  for (let index = 0; index < job.items.length; index += 1) {
+    consMarkItemStarted(job, index);
+    consMarkItemPrepared(job, index, { contentCleanup: { consultantDataRemoved: true }, text: "SECRET_BODY" });
+  }
+  assert.equal(consJobProgress(job).current, 2);
+  assert.equal(consJobProgress(job).completed, 0);
+  assert.equal(job.nextIndex, 2);
+  assert.equal(job.current, null);
+  assert.ok(job.items.every((item) => item.status === "prepared" && !item.finishedAt));
+  assert.doesNotMatch(JSON.stringify(job), /SECRET_BODY/u);
+  for (let index = 0; index < job.items.length; index += 1) {
+    consMarkItemFinished(job, index, "completed", { filename: "Единая подборка.md", downloadId: 42 });
+  }
+  assert.equal(consJobProgress(job).completed, 2);
+  assert.ok(job.items.every((item) => item.downloadId === 42 && item.actualFilename === "Единая подборка.md"));
+});
+
+test("a stopped or failed merged export never counts prepared documents as saved", () => {
+  for (const status of ["stopped", "failed"]) {
+    const job = createJob();
+    consMarkItemPrepared(job, 0);
+    consFinishJob(job, status);
+    assert.equal(consJobProgress(job).completed, 0);
+    assert.ok(job.items.every((item) => item.status === status && item.downloadId === null));
+  }
 });

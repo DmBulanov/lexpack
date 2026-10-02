@@ -296,12 +296,17 @@ input {
   font-size: 12px;
 }
 
-#btnExport[hidden] {
+#btnExport[hidden],
+#btnDownloadNow[hidden] {
   display: none;
 }
 
 .result-actions .btn {
   width: 100%;
+}
+
+.result-actions .btn + .btn {
+  margin-top: 8px;
 }
 
 .btn:focus-visible,

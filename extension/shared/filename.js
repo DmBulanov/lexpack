@@ -20,9 +20,11 @@
   }
 
   function consSafeExtension(ext, fallback = "txt") {
+    const format = String(ext || fallback).toLowerCase();
+    if (format === "docx-one") return "docx";
+    if (format === "md-one") return "md";
     return (
-      String(ext || fallback)
-        .toLowerCase()
+      format
         .replace(/^\./, "")
         .replace(/[^a-z0-9]/g, "") || fallback
     ).slice(0, 8);
@@ -87,7 +89,7 @@
 
   function consSafeFilename(title, index, ext) {
     const safeExt = consSafeExtension(ext);
-    const sourceTitle = safeExt === "md"
+    const sourceTitle = safeExt === "md" || String(ext || "").toLowerCase() === "docx-one"
       ? String(title || "").replace(/\.(?:pdf|docx|md)$/iu, "")
       : title;
     const name = consSanitizeFilenameStem(sourceTitle, {

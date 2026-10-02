@@ -30,6 +30,14 @@ test("planner exposes Markdown as a selectable profile format", () => {
   assert.doesNotMatch(html, /<option value="rtf">/i);
 });
 
+test("planner exposes the two merged formats and explains their text-only output", () => {
+  assert.match(html, /<option value="docx-one">DOCX \(единый\)<\/option>/u);
+  assert.match(html, /<option value="md-one">Markdown \(единый\)<\/option>/u);
+  assert.match(html, /id="mergedFormatHint"[^>]+hidden/u);
+  assert.match(html, /изображения и оформление таблиц не переносятся/u);
+  assert.match(source, /consIsMergedFormat\(currentPlan\.format\)/u);
+});
+
 test("planner manages profiles and blocks launch through plan validation", () => {
   for (const id of [
     "profileSelect", "newProfile", "duplicateProfile", "deleteProfile",

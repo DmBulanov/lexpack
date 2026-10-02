@@ -178,8 +178,9 @@ test("collection action opens planner and has no first-N quantity control", () =
 
 test("manual judicial results remain independent from the optional new-search form", () => {
   assert.match(source, /function manualCategoryIsSupported\(category\)/);
-  assert.match(source, /CONS_JUDICIAL_INSTANCES\.includes/);
-  assert.match(source, /Выберите слева уровень судебной инстанции, который нужно скачать/);
+  assert.doesNotMatch(source, /CONS_JUDICIAL_INSTANCES\.includes/);
+  assert.match(source, /category\?\.selected === true && category\?\.judicial === true/);
+  assert.match(source, /Выберите слева суд или судебную категорию/);
   assert.match(source, /source: "current-list"/);
   assert.match(
     source,

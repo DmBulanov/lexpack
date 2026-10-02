@@ -7,6 +7,7 @@ const els = {
   profileSelect: document.getElementById("profileSelect"),
   profileName: document.getElementById("profileName"),
   format: document.getElementById("format"),
+  mergedFormatHint: document.getElementById("mergedFormatHint"),
   filenameTemplate: document.getElementById("filenameTemplate"),
   folderTemplate: document.getElementById("folderTemplate"),
   newProfile: document.getElementById("newProfile"),
@@ -210,6 +211,7 @@ function renderRows() {
 }
 
 function renderPlan() {
+  els.mergedFormatHint.hidden = !consIsMergedFormat(currentPlan?.format);
   const selected = currentPlan?.selectedCount || 0;
   els.selectedCount.textContent = `Выбрано: ${selected} из ${sourceItems.length}`;
   const warningCount = currentPlan?.warnings?.length || 0;
@@ -225,7 +227,7 @@ function renderPlan() {
   els.selectAll.disabled = running || !sourceItems.length;
   els.selectNone.disabled = running || !sourceItems.length;
   els.launchSummary.textContent = selected
-    ? `${selected} документ(ов) · ${currentPlan.format.toUpperCase()}`
+    ? `${selected} документ(ов)${consIsMergedFormat(currentPlan.format) ? " → 1 файл" : ""} · ${consExportFormatLabel(currentPlan.format)}`
     : "Выберите документы";
   els.launchHint.textContent = errors.length
     ? errors[0].message
@@ -288,8 +290,11 @@ async function deleteProfile() {
 function collectionLabel(value) {
   if (!value) return "Подборка не загружена.";
   const count = value.items?.length || 0;
-  const suffix = value.truncated ? " (достигнут лимит 200)" : "";
-  return `Собрано: ${count}${suffix}. Порядок соответствует исходной подборке.`;
+  const suffix = value.truncated
+    ? count >= 200 ? " (достигнут лимит 200)" : " (список собран не полностью; повторите чтение)"
+    : "";
+  const label = value.label ? `«${value.label}». ` : "";
+  return `${label}Собрано: ${count}${suffix}. Порядок соответствует исходной подборке.`;
 }
 
 function historyNotice(mode) {
@@ -384,7 +389,7 @@ function renderHistory() {
     entry.className = "history-entry";
     const info = document.createElement("div");
     const title = document.createElement("h3");
-    title.textContent = `${historyDate(record.finishedAt)} · ${String(record.format || "").toUpperCase()} · ${record.profileName}`;
+    title.textContent = `${historyDate(record.finishedAt)} · ${consExportFormatLabel(record.format)} · ${record.profileName}`;
     const counts = document.createElement("p");
     counts.textContent = `Выбрано ${record.selectedCount}; успешно ${record.successful}; проверить ${record.reviewRequired}; ошибок ${record.failed}.`;
     const mode = document.createElement("p");

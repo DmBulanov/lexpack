@@ -798,6 +798,26 @@ async function updateCurrent(jobId, patch, phase) {
   });
 }
 
+async function openExportTab(jobId, url, phase = "loading_tab") {
+  // Register the temporary tab before navigation so a restart/stop can
+  // always find and close it, including during the initial page load.
+  const tab = await chrome.tabs.create({ url: "about:blank", active: false });
+  try {
+    await updateCurrent(jobId, { tabId: tab.id }, phase);
+    await waitTabComplete(tab.id, TAB_TIMEOUT_MS, null, jobId);
+    await assertJobCanContinue(jobId);
+    await chrome.tabs.update(tab.id, { url });
+    return tab;
+  } catch (error) {
+    try {
+      await chrome.tabs.remove(tab.id);
+    } catch {
+      // The user or another cleanup path may already have closed the tab.
+    }
+    throw error;
+  }
+}
+
 async function cleanupResources(job, cancelDownload = false) {
   const current = job?.current;
   if (!current) return;
@@ -919,8 +939,7 @@ async function processExportItem(job, itemIndex) {
     job.format
   );
 
-  const tab = await chrome.tabs.create({ url, active: false });
-  await updateCurrent(job.id, { tabId: tab.id }, "loading_tab");
+  const tab = await openExportTab(job.id, url);
 
   try {
     await waitTabComplete(tab.id, TAB_TIMEOUT_MS, null, job.id);
@@ -1200,6 +1219,115 @@ async function stopCurrentWork(job) {
   await closeOffscreenDocument();
 }
 
+async function runMergedExportJob(initialJob) {
+  let job = initialJob;
+  try {
+    let result;
+    if (job.current?.downloadKind === "direct") {
+      result = await resumeExistingDownload(job);
+      await cleanupResources(await readJob());
+    } else {
+      if (job.current) await cleanupResources(job);
+      const buffer = await offscreenRequest("BEGIN_MERGED_DOCUMENT", {
+        jobId: job.id,
+        format: job.format,
+      });
+      const available = new Set(buffer.indexes);
+      // The offscreen buffer survives a worker restart. If it was also lost,
+      // read the sources again instead of persisting document bodies to disk.
+      if (job.items.some((item, index) => item.status === "prepared" && !available.has(index))) {
+        job = await mutateJob((draft) => {
+          for (const item of draft.items) item.status = "queued";
+          draft.nextIndex = 0;
+          draft.current = null;
+          consAppendJobLog(draft, "Восстанавливаю единый документ: повторно читаю материалы");
+          return draft;
+        });
+      }
+      while (job.nextIndex < job.items.length) {
+        await assertJobCanContinue(job.id);
+        const index = job.nextIndex;
+        const item = job.items[index];
+        await mutateJob((draft) => consMarkItemStarted(draft, index));
+        const url = consNormalizeDocumentUrl(item.url, job.adapter);
+        const tab = await openExportTab(job.id, url, "collecting_merged");
+        let extracted;
+        try {
+          await waitTabComplete(tab.id, TAB_TIMEOUT_MS, null, job.id);
+          await waitDocumentReady(tab.id, "md", job.id);
+          await assertJobCanContinue(job.id);
+          extracted = await sendToTab(tab.id, { type: "EXTRACT_DOCUMENT", format: "md" });
+          if (!extracted?.ok || !extracted.doc || extracted.doc.nativeSaveTriggered) {
+            throw responseError(extracted, "Не удалось прочитать материал для единого документа");
+          }
+          await offscreenRequest("ADD_MERGED_DOCUMENT", {
+            jobId: job.id, index,
+            doc: { ...extracted.doc, title: item.originalTitle || extracted.doc.title },
+          });
+        } finally {
+          await cleanupResources(await readJob());
+        }
+        await assertJobCanContinue(job.id);
+        job = await mutateJob((draft) => {
+          consMarkItemPrepared(draft, index, { contentCleanup: extracted.doc.contentCleanup });
+          consAppendJobLog(draft, `Прочитано [${index + 1}/${draft.items.length}] ${item.title.slice(0, 70)}`);
+          return draft;
+        });
+      }
+      await assertJobCanContinue(job.id);
+      if (!job.mergedFile) throw new Error("В плане отсутствует имя единого документа");
+      const destination = consSafeRelativeDownloadPath(
+        job.mergedFile.plannedRelativeFolder,
+        job.mergedFile.plannedFilename,
+        consSafeExtension(job.format)
+      );
+      const built = await offscreenRequest("BUILD_MERGED_DOCUMENT", {
+        jobId: job.id, count: job.items.length,
+      });
+      await mutateJob((draft) => {
+        draft.phase = "saving_merged";
+        draft.current = {
+          itemIndex: -1, tabId: null, downloadId: null, blobUrl: built.url,
+          expectedFilename: destination.filename,
+          expectedRelativeFolder: destination.folder,
+          expectedRelativePath: destination.path,
+          downloadKind: "direct", downloadStartedAt: Date.now(),
+        };
+        return draft;
+      });
+      await assertJobCanContinue(job.id);
+      const downloadId = await chrome.downloads.download({
+        url: built.url, filename: destination.path, saveAs: false, conflictAction: "uniquify",
+      });
+      await updateCurrent(job.id, { downloadId }, "waiting_download");
+      const completed = await waitForDownloadCompletion(job.id, downloadId, DIRECT_DOWNLOAD_TIMEOUT_MS);
+      result = { downloadId, filename: downloadBasename(completed, destination.filename) };
+      await cleanupResources(await readJob());
+    }
+    await assertJobCanContinue(job.id);
+    result = { downloadId: result.downloadId, filename: result.filename };
+    await mutateJob((draft) => {
+      for (let index = 0; index < draft.items.length; index += 1) {
+        consMarkItemFinished(draft, index, "completed", result);
+      }
+      draft.mergedResult = result;
+      consAppendJobLog(draft, `Единый документ: ${result.filename}`);
+      return draft;
+    });
+    // Use the existing report/history completion path after one confirmed file.
+    return runStoredJob();
+  } catch (error) {
+    const latest = await readJob();
+    if (latest?.stopRequested || latest?.status === "stopping") {
+      await stopCurrentWork(latest);
+      return;
+    }
+    await cleanupResources(latest, true);
+    await closeOffscreenDocument();
+    throw error;
+  }
+}
+
 async function runStoredJob() {
   let job = await readJob();
   if (!consIsJobActive(job)) {
@@ -1241,6 +1369,10 @@ async function runStoredJob() {
         ? "Сохранённая задача использует отключённый формат RTF; создайте новую выгрузку"
         : "Сохранённая задача использует неподдерживаемый формат"
     );
+  }
+
+  if (consIsMergedFormat(job.format) && !job.mergedResult) {
+    return runMergedExportJob(job);
   }
 
   while (job && consIsJobActive(job)) {
@@ -1537,10 +1669,12 @@ async function persistSearchCollection(options = {}) {
     query: normalizedCollectionQuery(options.query),
     categoryKey: normalizedCollectionCategory(options.categoryKey),
     scope: String(options.scope || "current-list").slice(0, 200),
+    ...(options.label ? { label: String(options.label).slice(0, 500) } : {}),
     items,
     total: Number.isInteger(total) && total >= items.length ? total : items.length,
     totalKnown: options.totalKnown === true,
     truncated: options.truncated === true,
+    incomplete: options.incomplete === true,
     collectionIdentity: normalizedCollectionIdentity(options.collectionIdentity),
     createdAt: new Date().toISOString(),
   };
@@ -1645,6 +1779,7 @@ async function startExportJob(options) {
       id,
       adapter,
       format,
+      mergedFile: plan.mergedFile,
       items,
       folder: plan.reportRelativeFolder,
       reportRelativeFolder: plan.reportRelativeFolder,
@@ -1659,7 +1794,7 @@ async function startExportJob(options) {
       reportQueryIncluded: historyMode === "detailed",
       reportEnabled: options.reportEnabled,
     });
-    consAppendJobLog(job, `Старт: ${items.length} док. → .${format}`);
+    consAppendJobLog(job, `Старт: ${items.length} док. → ${consExportFormatLabel(format)}`);
     if (truncated) {
       consAppendJobLog(job, `Применён лимит: ${items.length} из ${options.items.length}`);
     }
@@ -2123,7 +2258,7 @@ async function executeSearchFlow(message) {
       // The result remains usable now, but it will be rescanned after popup reload.
     }
   }
-  await persistSearchCollection({
+  const collection = await persistSearchCollection({
     source: "search",
     tabId: collectionTabId,
     adapter: result.adapter,
@@ -2136,7 +2271,7 @@ async function executeSearchFlow(message) {
     truncated: result.truncated === true,
     collectionIdentity,
   });
-  return { ...result, count };
+  return { ...result, count, collection };
 }
 
 async function runSearchFlow(message) {
@@ -2320,6 +2455,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           history,
           progress: consJobProgress(job),
           running: consIsJobActive(job),
+        };
+      }
+
+      case "START_COLLECTION_EXPORT": {
+        if (sender.url !== chrome.runtime.getURL("popup/popup.html")) {
+          return { ok: false, error: "Запустите скачивание из окна LexPack" };
+        }
+        if (searchFlowInProgress) return { ok: false, error: "Дождитесь завершения поиска" };
+        const collection = await readSearchCollection();
+        if (!collection || collection.status !== "ready" || !collection.items?.length ||
+            !message.collectionCreatedAt || collection.createdAt !== message.collectionCreatedAt) {
+          return { ok: false, error: "Подборка изменилась. Откройте окно LexPack заново, чтобы обновить список." };
+        }
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (activeTab?.id !== collection.tabId) {
+          return { ok: false, error: "Открыта другая вкладка. Вернитесь к выбранной подборке и откройте LexPack заново." };
+        }
+        const ping = await sendToTab(collection.tabId, { type: "PING" });
+        if (!ping?.ok || ping.page !== "list" || ping.adapter !== collection.adapter ||
+            normalizedCollectionQuery(ping.query) !== collection.query ||
+            (collection.adapter === "online-app" &&
+              (!ping.category?.selected || !ping.category.judicial ||
+               !collectionIdentityMatches(collection.collectionIdentity, ping.collectionIdentity)))) {
+          return { ok: false, error: "Выдача изменилась. Откройте LexPack заново для выбранного суда." };
+        }
+        if (collection.incomplete || (collection.totalKnown &&
+            collection.items.length < Math.min(collection.total, MAX_EXPORT_ITEMS)) ||
+            (collection.truncated && !collection.totalKnown && collection.items.length < MAX_EXPORT_ITEMS)) {
+          return { ok: false, error: "Подборка собрана не полностью. Повторите чтение или нажмите «Настроить выгрузку», чтобы проверить список." };
+        }
+        const selected = consGetSelectedProfile(await readProfileState());
+        const profile = consNormalizeProfile({
+          ...selected,
+          format: consAssertFormatSupported(collection.adapter, message.format),
+          folderTemplate: consSanitizeFolder(message.folder),
+        }, { builtIn: selected.id === CONS_DEFAULT_PROFILE_ID });
+        const plan = consBuildExportPlan({
+          adapter: collection.adapter, query: collection.query,
+          collection, items: collection.items, profile,
+        });
+        if (!plan.ok) return { ok: false, error: plan.errors[0]?.message || "Проверьте параметры выгрузки" };
+        const started = await startExportJob({ plan });
+        return {
+          ok: true, started: true, jobId: started.job.id,
+          total: started.job.items.length, format: started.job.format,
+          truncated: collection.truncated,
         };
       }
 

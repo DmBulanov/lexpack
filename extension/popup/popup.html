@@ -15,7 +15,10 @@
     <section id="resultActions" class="block result-actions" hidden>
       <div id="resultTitle" class="result-title">Открытая подборка</div>
       <div id="foundSummary" class="result-summary" aria-live="polite"></div>
-      <button id="btnExport" class="btn primary" type="button" disabled hidden>
+      <button id="btnDownloadNow" class="btn primary" type="button" disabled hidden>
+        Скачать сразу
+      </button>
+      <button id="btnExport" class="btn secondary" type="button" disabled hidden>
         Настроить выгрузку
       </button>
     </section>
@@ -140,6 +143,8 @@
         <option value="pdf">PDF</option>
         <option value="txt">TXT — текст</option>
         <option value="md">Markdown</option>
+        <option value="docx-one">DOCX (единый)</option>
+        <option value="md-one">Markdown (единый)</option>
         <option value="html">HTML</option>
       </select>
       <div class="label-row scope-label">
